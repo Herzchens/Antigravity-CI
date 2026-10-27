@@ -585,7 +585,7 @@ Do not inspect or modify the probe script. Do not run any other command. After t
         '-p',
         $prompt,
         '--output-format',
-        'json',
+        'stream-json',
         '--json-schema',
         $schemaPath,
         '--print-timeout',
@@ -745,13 +745,172 @@ Do not inspect or modify the probe script. Do not run any other command. After t
         throw "Antigravity sandbox smoke test exited with code $($process.ExitCode)."
     }
 
-    try {
-        $envelope = ConvertFrom-Json -InputObject $stdout -Depth 32 -ErrorAction Stop
-    }
-    catch {
-        throw 'Antigravity sandbox smoke-test stdout was not valid JSON.'
+    $streamEvents = [System.Collections.Generic.List[object]]::new()
+    foreach ($line in [regex]::Split($stdout, '\r?\n')) {
+        if ([string]::IsNullOrWhiteSpace($line)) {
+            continue
+        }
+
+        try {
+            $streamEvent = ConvertFrom-Json -InputObject $line -Depth 32 -ErrorAction Stop
+        }
+        catch {
+            throw 'Antigravity sandbox smoke-test stdout contained an invalid stream-json event.'
+        }
+
+        if ($null -eq $streamEvent.PSObject.Properties['event'] -or
+            [string]::IsNullOrWhiteSpace([string] $streamEvent.event)) {
+            throw 'Antigravity sandbox smoke-test stream event is missing its event discriminator.'
+        }
+
+        if ([string] $streamEvent.event -cnotin @('init', 'step_update', 'result')) {
+            throw "Antigravity sandbox smoke-test emitted an unsupported stream event '$($streamEvent.event)'."
+        }
+
+        $streamEvents.Add($streamEvent)
+        if ($streamEvents.Count -gt 4096) {
+            throw 'Antigravity sandbox smoke-test emitted too many stream-json events.'
+        }
     }
 
+    if ($streamEvents.Count -lt 2) {
+        throw 'Antigravity sandbox smoke-test did not emit a complete stream-json run.'
+    }
+
+    $initEvents = @(
+        $streamEvents |
+        Where-Object { [string] $_.event -ceq 'init' }
+    )
+    $resultEvents = @(
+        $streamEvents |
+        Where-Object { [string] $_.event -ceq 'result' }
+    )
+
+    if ($initEvents.Count -ne 1) {
+        throw "Antigravity sandbox smoke-test must emit exactly one init event; found $($initEvents.Count)."
+    }
+
+    if ($resultEvents.Count -ne 1) {
+        throw "Antigravity sandbox smoke-test must emit exactly one result event; found $($resultEvents.Count)."
+    }
+
+    if ([string] $streamEvents[0].event -cne 'init' -or
+        [string] $streamEvents[$streamEvents.Count - 1].event -cne 'result') {
+        throw 'Antigravity sandbox smoke-test stream ordering is invalid.'
+    }
+
+    $initEvent = $initEvents[0]
+    if ($null -eq $initEvent.PSObject.Properties['init'] -or $null -eq $initEvent.init) {
+        throw 'Antigravity sandbox smoke-test init event is missing its payload.'
+    }
+
+    $initPayload = $initEvent.init
+    if ($null -eq $initPayload.PSObject.Properties['permission_mode']) {
+        throw 'Antigravity sandbox smoke-test init event is missing permission_mode.'
+    }
+
+    if ([string] $initPayload.permission_mode -ceq 'always-proceed') {
+        throw 'Antigravity sandbox smoke-test unexpectedly enabled always-proceed permission mode.'
+    }
+
+    if ($null -eq $initPayload.PSObject.Properties['cwd'] -or
+        [string]::IsNullOrWhiteSpace([string] $initPayload.cwd)) {
+        throw 'Antigravity sandbox smoke-test init event is missing cwd.'
+    }
+
+    try {
+        $streamWorkingDirectory = [System.IO.Path]::GetFullPath([string] $initPayload.cwd)
+    }
+    catch {
+        throw 'Antigravity sandbox smoke-test init cwd is not a valid path.'
+    }
+
+    if (-not $streamWorkingDirectory.Equals(
+        [System.IO.Path]::GetFullPath($workspace),
+        [StringComparison]::OrdinalIgnoreCase
+    )) {
+        throw 'Antigravity sandbox smoke-test ran from an unexpected working directory.'
+    }
+
+    if ($null -eq $initPayload.PSObject.Properties['tools'] -or
+        @($initPayload.tools) -cnotcontains 'run_command') {
+        throw 'Antigravity sandbox smoke-test init event does not advertise run_command.'
+    }
+
+    $expectedProbeCommand = 'pwsh -NoProfile -File .\sandbox-probe.ps1'
+    $matchingProbeDoneEvents = 0
+
+    foreach ($streamEvent in $streamEvents) {
+        if ([string] $streamEvent.event -cne 'step_update') {
+            continue
+        }
+
+        if ($null -eq $streamEvent.PSObject.Properties['step_update'] -or
+            $null -eq $streamEvent.step_update) {
+            throw 'Antigravity sandbox smoke-test step_update event is missing its payload.'
+        }
+
+        $step = $streamEvent.step_update
+        if ($null -eq $step.PSObject.Properties['step_type'] -or
+            [string] $step.step_type -cne 'tool') {
+            continue
+        }
+
+        if ($null -eq $step.PSObject.Properties['tool_name'] -or
+            [string] $step.tool_name -cne 'run_command') {
+            throw 'Antigravity sandbox smoke-test invoked an unexpected tool.'
+        }
+
+        if ($null -eq $step.PSObject.Properties['tool_info'] -or
+            $null -eq $step.tool_info) {
+            throw 'Antigravity sandbox smoke-test tool event is missing tool_info.'
+        }
+
+        $toolInfo = $step.tool_info
+        if ($null -eq $toolInfo.PSObject.Properties['name'] -or
+            [string] $toolInfo.name -cne 'run_command') {
+            throw 'Antigravity sandbox smoke-test tool_info name does not match run_command.'
+        }
+
+        if ($null -eq $toolInfo.PSObject.Properties['parameters'] -or
+            $null -eq $toolInfo.parameters -or
+            $null -eq $toolInfo.parameters.PSObject.Properties['CommandLine']) {
+            throw 'Antigravity sandbox smoke-test run_command event is missing CommandLine.'
+        }
+
+        $commandLine = [string] $toolInfo.parameters.CommandLine
+        if ($commandLine -cne $expectedProbeCommand) {
+            throw "Antigravity sandbox smoke-test invoked an unexpected command: $commandLine"
+        }
+
+        if ($null -eq $step.PSObject.Properties['state']) {
+            throw 'Antigravity sandbox smoke-test tool event is missing state.'
+        }
+
+        if ([string] $step.state -ceq 'DONE') {
+            if ($null -ne $toolInfo.PSObject.Properties['error'] -and
+                $null -ne $toolInfo.error) {
+                throw 'Antigravity sandbox smoke-test probe command completed with a tool error.'
+            }
+
+            $matchingProbeDoneEvents++
+        }
+        elseif ([string] $step.state -cne 'ACTIVE') {
+            throw "Antigravity sandbox smoke-test tool event has unsupported state '$($step.state)'."
+        }
+    }
+
+    if ($matchingProbeDoneEvents -ne 1) {
+        throw "Antigravity sandbox smoke-test must attest exactly one completed probe command; found $matchingProbeDoneEvents."
+    }
+
+    $resultEvent = $resultEvents[0]
+    if ($null -eq $resultEvent.PSObject.Properties['result'] -or
+        $null -eq $resultEvent.result) {
+        throw 'Antigravity sandbox smoke-test result event is missing its payload.'
+    }
+
+    $envelope = $resultEvent.result
     if ([string] $envelope.status -cne 'SUCCESS') {
         throw "Antigravity sandbox smoke test returned status '$($envelope.status)'."
     }
@@ -850,6 +1009,9 @@ Do not inspect or modify the probe script. Do not run any other command. After t
 
     [pscustomobject][ordered]@{
         Valid = $true
+        ToolExecutionAttested = $true
+        StreamEventCount = $streamEvents.Count
+        PermissionMode = [string] $initPayload.permission_mode
         AgyPath = $agyPath
         AgySha256 = $finalAgyHash
         OutsideReadBlocked = $true
