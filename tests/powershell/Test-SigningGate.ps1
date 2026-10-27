@@ -276,10 +276,68 @@ try {
         throw 'Expected stale remote lease to be rejected.'
     }
 
+    $baseTree = (
+        Invoke-Checked -FilePath 'git' -Arguments @('rev-parse', "$baseSha^{tree}") -WorkingDirectory $workRepo |
+        Select-Object -First 1
+    ).Trim()
+
+    $rawCommitPath = Join-Path $tempRoot 'unsupported-header.commit'
+    $rawCommit = @(
+        "tree $baseTree",
+        "parent $baseSha",
+        'author Metadata Fixture <fixture@example.invalid> 1700000000 +0000',
+        'committer Metadata Fixture <fixture@example.invalid> 1700000000 +0000',
+        'encoding ISO-8859-1',
+        '',
+        'metadata fixture'
+    ) -join [char] 10
+
+    [System.IO.File]::WriteAllText(
+        $rawCommitPath,
+        $rawCommit,
+        [System.Text.UTF8Encoding]::new($false)
+    )
+
+    $unsupportedHeaderSha = (
+        Invoke-Checked -FilePath 'git' -Arguments @(
+            'hash-object',
+            '-t',
+            'commit',
+            '-w',
+            $rawCommitPath
+        ) -WorkingDirectory $workRepo |
+        Select-Object -First 1
+    ).Trim()
+
+    $unsupportedHeaderParameters = @{
+        RepositoryPath = $workRepo
+        BaseSha = $baseSha
+        HeadSha = $unsupportedHeaderSha
+        BranchName = 'metadata-fixture'
+        TrustedPublicKey = "$signingKey.pub"
+    }
+
+    $unsupportedHeaderRejected = $false
+    try {
+        & $gateScript @unsupportedHeaderParameters | Out-Null
+    }
+    catch {
+        if ($_.Exception.Message -notlike "*unsupported header 'encoding'*") {
+            throw
+        }
+
+        $unsupportedHeaderRejected = $true
+    }
+
+    if (-not $unsupportedHeaderRejected) {
+        throw 'Expected signing rewrite with an unsupported commit header to fail closed.'
+    }
+
     Write-Host '[PASS] preserve mode keeps commit count and commit subjects'
     Write-Host '[PASS] final tree is unchanged'
     Write-Host '[PASS] every rewritten commit verifies with the trusted SSH key'
     Write-Host '[PASS] real remote-head race is rejected before lease-protected update'
+    Write-Host '[PASS] unsupported commit headers are rejected instead of being lost during rewrite'
 }
 finally {
     if (Test-Path -LiteralPath $tempRoot) {

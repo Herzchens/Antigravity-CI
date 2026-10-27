@@ -168,7 +168,7 @@ function Test-TrustedSignature {
     }
 }
 
-function Get-CommitMessageBytes {
+function Get-CommitObjectBytes {
     param(
         [Parameter(Mandatory)]
         [string] $Sha
@@ -194,32 +194,121 @@ function Get-CommitMessageBytes {
 
     $memory = [System.IO.MemoryStream]::new()
     try {
-        $process.StandardOutput.BaseStream.CopyTo($memory)
-        $stderr = $process.StandardError.ReadToEnd()
+        $stdoutTask = $process.StandardOutput.BaseStream.CopyToAsync($memory)
+        $stderrTask = $process.StandardError.ReadToEndAsync()
+
         $process.WaitForExit()
+        $stdoutTask.GetAwaiter().GetResult()
+        $null = $stderrTask.GetAwaiter().GetResult()
 
         if ($process.ExitCode -ne 0) {
             throw "git cat-file failed for commit $Sha."
         }
 
-        $bytes = $memory.ToArray()
+        $memory.ToArray()
     }
     finally {
         $memory.Dispose()
         $process.Dispose()
     }
+}
 
-    for ($index = 0; $index -lt ($bytes.Length - 1); $index++) {
-        if ($bytes[$index] -eq 10 -and $bytes[$index + 1] -eq 10) {
-            $messageStart = $index + 2
-            $messageLength = $bytes.Length - $messageStart
-            $message = [byte[]]::new($messageLength)
-            [System.Array]::Copy($bytes, $messageStart, $message, 0, $messageLength)
-            return $message
+function Get-CommitHeaderBoundary {
+    param(
+        [Parameter(Mandatory)]
+        [byte[]] $Bytes,
+
+        [Parameter(Mandatory)]
+        [string] $Sha
+    )
+
+    for ($index = 0; $index -lt ($Bytes.Length - 1); $index++) {
+        if ($Bytes[$index] -eq 10 -and $Bytes[$index + 1] -eq 10) {
+            return $index
         }
     }
 
     throw "Commit $Sha does not contain a valid header/message separator."
+}
+
+function Assert-RewritableCommitHeaders {
+    param(
+        [Parameter(Mandatory)]
+        [string] $Sha,
+
+        [Parameter(Mandatory)]
+        [byte[]] $Bytes
+    )
+
+    $headerEnd = Get-CommitHeaderBoundary -Bytes $Bytes -Sha $Sha
+    $allowedHeaders = [System.Collections.Generic.HashSet[string]]::new(
+        [System.StringComparer]::Ordinal
+    )
+
+    foreach ($name in @(
+        'tree',
+        'parent',
+        'author',
+        'committer',
+        'gpgsig',
+        'gpgsig-sha256'
+    )) {
+        [void] $allowedHeaders.Add($name)
+    }
+
+    $lineStart = 0
+    while ($lineStart -lt $headerEnd) {
+        $lineEnd = $lineStart
+        while ($lineEnd -lt $headerEnd -and $Bytes[$lineEnd] -ne 10) {
+            $lineEnd++
+        }
+
+        if ($Bytes[$lineStart] -ne 32 -and $Bytes[$lineStart] -ne 9) {
+            $space = $lineStart
+            while ($space -lt $lineEnd -and $Bytes[$space] -ne 32) {
+                $space++
+            }
+
+            if ($space -eq $lineStart -or $space -ge $lineEnd) {
+                throw "Commit $Sha contains a malformed commit header."
+            }
+
+            $name = [System.Text.Encoding]::ASCII.GetString(
+                $Bytes,
+                $lineStart,
+                $space - $lineStart
+            )
+
+            if (-not $allowedHeaders.Contains($name)) {
+                throw "Commit $Sha contains unsupported header '$name'; refusing a lossy signing rewrite."
+            }
+        }
+
+        $lineStart = $lineEnd + 1
+    }
+}
+
+function Get-CommitMessageBytes {
+    param(
+        [Parameter(Mandatory)]
+        [string] $Sha,
+
+        [byte[]] $CommitBytes
+    )
+
+    $bytes = if ($null -eq $CommitBytes) {
+        Get-CommitObjectBytes -Sha $Sha
+    }
+    else {
+        $CommitBytes
+    }
+
+    $headerEnd = Get-CommitHeaderBoundary -Bytes $bytes -Sha $Sha
+    $messageStart = $headerEnd + 2
+    $messageLength = $bytes.Length - $messageStart
+    $message = [byte[]]::new($messageLength)
+    [System.Array]::Copy($bytes, $messageStart, $message, 0, $messageLength)
+    $message
 }
 
 function New-SignedCommit {
@@ -232,7 +321,9 @@ function New-SignedCommit {
     )
 
     $messagePath = Join-Path $script:TempDirectory ($Record.Sha + '.message')
-    $messageBytes = Get-CommitMessageBytes -Sha $Record.Sha
+    $commitBytes = Get-CommitObjectBytes -Sha $Record.Sha
+    Assert-RewritableCommitHeaders -Sha $Record.Sha -Bytes $commitBytes
+    $messageBytes = Get-CommitMessageBytes -Sha $Record.Sha -CommitBytes $commitBytes
     [System.IO.File]::WriteAllBytes($messagePath, $messageBytes)
 
     $savedEnvironment = @{
