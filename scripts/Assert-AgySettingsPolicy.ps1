@@ -12,6 +12,77 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
+function Assert-NoDuplicateJsonProperties {
+    param(
+        [Parameter(Mandatory)]
+        [System.Text.Json.JsonElement] $Element
+    )
+
+    if ($Element.ValueKind -eq [System.Text.Json.JsonValueKind]::Object) {
+        $seen = [System.Collections.Generic.HashSet[string]]::new(
+            [System.StringComparer]::Ordinal
+        )
+
+        foreach ($property in $Element.EnumerateObject()) {
+            if (-not $seen.Add($property.Name)) {
+                throw 'Antigravity host JSON contains a duplicate property.'
+            }
+
+            Assert-NoDuplicateJsonProperties -Element $property.Value
+        }
+
+        return
+    }
+
+    if ($Element.ValueKind -eq [System.Text.Json.JsonValueKind]::Array) {
+        foreach ($item in $Element.EnumerateArray()) {
+            Assert-NoDuplicateJsonProperties -Element $item
+        }
+    }
+}
+
+function ConvertFrom-StrictHostJson {
+    param(
+        [Parameter(Mandatory)]
+        [string] $Path,
+
+        [Parameter(Mandatory)]
+        [string] $DisplayName
+    )
+
+    $bytes = [System.IO.File]::ReadAllBytes($Path)
+    $strictUtf8 = [System.Text.UTF8Encoding]::new($false, $true)
+
+    try {
+        $json = $strictUtf8.GetString($bytes)
+    }
+    catch [System.Text.DecoderFallbackException] {
+        throw "$DisplayName is not valid UTF-8."
+    }
+
+    $document = $null
+    try {
+        $options = [System.Text.Json.JsonDocumentOptions]::new()
+        $document = [System.Text.Json.JsonDocument]::Parse($json, $options)
+        Assert-NoDuplicateJsonProperties -Element $document.RootElement
+    }
+    catch [System.Text.Json.JsonException] {
+        throw "$DisplayName is not valid JSON."
+    }
+    finally {
+        if ($null -ne $document) {
+            $document.Dispose()
+        }
+    }
+
+    try {
+        ConvertFrom-Json -InputObject $json -Depth 64 -ErrorAction Stop
+    }
+    catch {
+        throw "$DisplayName is not valid JSON."
+    }
+}
+
 function Get-PropertyValue {
     param(
         [Parameter(Mandatory)]
@@ -40,13 +111,7 @@ if ($item.Length -gt $MaxBytes) {
     throw "Antigravity settings exceed the maximum allowed size of $MaxBytes bytes."
 }
 
-$raw = Get-Content -LiteralPath $resolvedSettingsPath -Raw -Encoding utf8
-try {
-    $settings = ConvertFrom-Json -InputObject $raw -Depth 64 -ErrorAction Stop
-}
-catch {
-    throw 'Antigravity settings.json is not valid JSON.'
-}
+$settings = ConvertFrom-StrictHostJson -Path $resolvedSettingsPath -DisplayName 'Antigravity settings.json'
 
 if ($null -eq $settings -or $settings -isnot [psobject]) {
     throw 'Antigravity settings.json must contain a JSON object.'
