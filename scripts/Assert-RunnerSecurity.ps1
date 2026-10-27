@@ -3,7 +3,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)]
-    [ValidateSet('Signing', 'Review')]
+    [ValidateSet('Signing', 'Review', 'Publisher')]
     [string] $Role,
 
     [string] $TrustedPublicKey,
@@ -11,6 +11,8 @@ param(
     [string] $AgyExecutable = 'agy',
 
     [string] $ForbiddenIdentity,
+
+    [string[]] $ForbiddenIdentities = @(),
 
     [string] $ExpectedTrustedKeyFingerprint,
 
@@ -86,22 +88,43 @@ if ([Environment]::OSVersion.Version.Build -lt $MinimumWindowsBuild) {
 $null = Get-Command git -ErrorAction Stop
 $null = Get-Command ssh-keygen -ErrorAction Stop
 
-if ([string]::IsNullOrWhiteSpace($TrustedPublicKey)) {
-    throw 'TrustedPublicKey is required for runner security preflight.'
+$trustedKey = $null
+$trustedFingerprint = $null
+
+if ($Role -in @('Signing', 'Review')) {
+    if ([string]::IsNullOrWhiteSpace($TrustedPublicKey)) {
+        throw "TrustedPublicKey is required for runner role '$Role'."
+    }
+
+    $trustedKey = Get-PublicKeyMaterial -Path $TrustedPublicKey
+    $trustedKeyPath = (Resolve-Path -LiteralPath $TrustedPublicKey -ErrorAction Stop).Path
+    $trustedFingerprint = Get-PublicKeyFingerprint -Path $trustedKeyPath
+
+    if (-not [string]::IsNullOrWhiteSpace($ExpectedTrustedKeyFingerprint) -and
+        $trustedFingerprint -cne $ExpectedTrustedKeyFingerprint) {
+        throw "Trusted public-key fingerprint '$trustedFingerprint' does not match expected fingerprint '$ExpectedTrustedKeyFingerprint'."
+    }
+}
+elseif (-not [string]::IsNullOrWhiteSpace($ExpectedTrustedKeyFingerprint)) {
+    throw 'ExpectedTrustedKeyFingerprint is not valid for the Publisher role.'
 }
 
-$trustedKey = Get-PublicKeyMaterial -Path $TrustedPublicKey
-$trustedKeyPath = (Resolve-Path -LiteralPath $TrustedPublicKey -ErrorAction Stop).Path
-$trustedFingerprint = Get-PublicKeyFingerprint -Path $trustedKeyPath
 $runnerIdentity = [Environment]::MachineName + '\' + [Environment]::UserName
+$forbidden = [System.Collections.Generic.HashSet[string]]::new(
+    [System.StringComparer]::OrdinalIgnoreCase
+)
 
-if (-not [string]::IsNullOrWhiteSpace($ExpectedTrustedKeyFingerprint) -and
-    $trustedFingerprint -cne $ExpectedTrustedKeyFingerprint) {
-    throw "Trusted public-key fingerprint '$trustedFingerprint' does not match expected fingerprint '$ExpectedTrustedKeyFingerprint'."
+if (-not [string]::IsNullOrWhiteSpace($ForbiddenIdentity)) {
+    [void] $forbidden.Add($ForbiddenIdentity)
 }
 
-if (-not [string]::IsNullOrWhiteSpace($ForbiddenIdentity) -and
-    $runnerIdentity.Equals($ForbiddenIdentity, [StringComparison]::OrdinalIgnoreCase)) {
+foreach ($identity in @($ForbiddenIdentities)) {
+    if (-not [string]::IsNullOrWhiteSpace($identity)) {
+        [void] $forbidden.Add($identity)
+    }
+}
+
+if ($forbidden.Contains($runnerIdentity)) {
     throw "Runner identity '$runnerIdentity' is forbidden for role '$Role'."
 }
 
@@ -162,19 +185,19 @@ $agentKeys = @(
 )
 
 if ($agentExitCode -eq 0 -and $agentKeys.Count -gt 0) {
-    throw 'Review runner exposes SSH agent identities. Use a separate Windows account without signing-agent access.'
+    throw "Non-signing runner role '$Role' exposes SSH agent identities. Use a separate Windows account without signing-agent access."
 }
 
 $globalSigningKey = Invoke-GitConfig -Arguments @('--global', '--get', 'user.signingkey')
 if ($globalSigningKey.ExitCode -eq 0 -and
     -not [string]::IsNullOrWhiteSpace(($globalSigningKey.Output | Select-Object -First 1))) {
-    throw 'Review runner must not have a global Git signing key configured.'
+    throw "Non-signing runner role '$Role' must not have a global Git signing key configured."
 }
 
 $globalCommitSigning = Invoke-GitConfig -Arguments @('--global', '--get', 'commit.gpgsign')
 if ($globalCommitSigning.ExitCode -eq 0 -and
     (($globalCommitSigning.Output | Select-Object -First 1).Trim().ToLowerInvariant() -eq 'true')) {
-    throw 'Review runner must not enable global commit signing.'
+    throw "Non-signing runner role '$Role' must not enable global commit signing."
 }
 
 $resolvedHomeDirectory = [System.IO.Path]::GetFullPath($HomeDirectory)
@@ -188,7 +211,7 @@ $defaultPrivateKeyCandidates = @(
 
 foreach ($candidate in $defaultPrivateKeyCandidates) {
     if (Test-Path -LiteralPath $candidate -PathType Leaf) {
-        throw "Review runner exposes a default SSH private-key path: $candidate"
+        throw "Non-signing runner role '$Role' exposes a default SSH private-key path: $candidate"
     }
 }
 
@@ -200,8 +223,21 @@ foreach ($name in @(
     'SSH_AGENT_PID'
 )) {
     if (-not [string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($name))) {
-        throw "Review runner preflight found unexpected sensitive environment variable '$name'."
+        throw "Non-signing runner role '$Role' found unexpected sensitive environment variable '$name'."
     }
+}
+
+if ($Role -eq 'Publisher') {
+    [pscustomobject][ordered]@{
+        Role = 'Publisher'
+        WindowsBuild = [Environment]::OSVersion.Version.Build
+        User = [Environment]::UserName
+        Identity = $runnerIdentity
+        SshAgentIdentityCount = $agentKeys.Count
+        Valid = $true
+    }
+
+    return
 }
 
 $agyCommand = Get-Command $AgyExecutable -CommandType Application -ErrorAction Stop |

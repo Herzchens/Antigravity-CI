@@ -61,15 +61,27 @@ Write-Host '[PASS] checkout actions are full-SHA pinned'
 Assert-Contains -Text $workflow -Needle "needs.sign.outputs.rewritten == 'false'" -Name 'AGY review is blocked in the signing-rewrite run'
 Assert-Contains -Text $workflow -Needle 'Signed history was pushed. This run stops before AGY review.' -Name 'signing synchronization barrier is explicit'
 
-$agyPosition = $workflow.IndexOf('- name: Run isolated Antigravity review', [StringComparison]::Ordinal)
-$reporterNeedle = 'AGY_REPORTER_TOKEN: $' + '{{ secrets.reporter_token }}'
-$reporterTokenPosition = $workflow.IndexOf($reporterNeedle, [StringComparison]::Ordinal)
+$reviewJobPosition = $workflow.IndexOf('  review:', [StringComparison]::Ordinal)
+$publisherJobPosition = $workflow.IndexOf('  publisher:', [StringComparison]::Ordinal)
 
-if ($agyPosition -lt 0 -or $reporterTokenPosition -lt 0 -or $reporterTokenPosition -lt $agyPosition) {
-    throw 'Reporter credential must not be materialized before the AGY step.'
+if ($reviewJobPosition -lt 0 -or $publisherJobPosition -le $reviewJobPosition) {
+    throw 'Expected separate review and publisher jobs.'
 }
 
-Write-Host '[PASS] reporter credential is materialized only after AGY review'
+$reviewJobText = $workflow.Substring(
+    $reviewJobPosition,
+    $publisherJobPosition - $reviewJobPosition
+)
+$publisherJobText = $workflow.Substring($publisherJobPosition)
+$reporterNeedle = 'AGY_REPORTER_TOKEN: $' + '{{ secrets.reporter_token }}'
+
+Assert-NotContains -Text $reviewJobText -Needle $reporterNeedle -Name 'review job never materializes reporter credential'
+Assert-Contains -Text $publisherJobText -Needle $reporterNeedle -Name 'reporter credential exists only in publisher job'
+Assert-Contains -Text $publisherJobText -Needle 'runs-on: [self-hosted, Windows, "${{ inputs.publisher_runner_label }}"]' -Name 'publisher uses a deployment-specific isolated runner'
+Assert-Contains -Text $reviewJobText -Needle 'actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02' -Name 'validated report upload action is full-SHA pinned'
+Assert-Contains -Text $publisherJobText -Needle 'actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093' -Name 'validated report download action is full-SHA pinned'
+Assert-NotContains -Text $publisherJobText -Needle 'Checkout exact signed PR head' -Name 'publisher never checks out reviewed PR code'
+Assert-Contains -Text $workflow -Needle 'retention-days: 1' -Name 'report handoff artifact has minimal retention'
 
 Assert-Contains -Text $caller -Needle 'github.event.pull_request.head.repo.full_name == github.repository' -Name 'caller rejects forks before allocating the reusable workflow'
 Assert-Contains -Text $caller -Needle 'github.event.pull_request.draft == false' -Name 'caller rejects draft PRs before allocating the reusable workflow'
@@ -94,3 +106,25 @@ Assert-Contains -Text $workflow -Needle 'signing_runner_identity:' -Name 'signin
 Assert-Contains -Text $workflow -Needle 'signing_key_fingerprint:' -Name 'signing key fingerprint is exported for review verification'
 Assert-Contains -Text $workflow -Needle '-ForbiddenIdentity $env:SIGNING_RUNNER_IDENTITY' -Name 'review runner cannot reuse signing OS identity'
 Assert-Contains -Text $workflow -Needle '-ExpectedTrustedKeyFingerprint $env:SIGNING_KEY_FINGERPRINT' -Name 'review public-key copy must match signing key fingerprint'
+
+
+Assert-Contains -Text $workflow -Needle 'contains(fromJSON(' -Name 'reusable workflow enforces an event-action allowlist before runner allocation'
+Assert-Contains -Text $workflow -Needle 'github.event.pull_request.draft == false' -Name 'reusable workflow rejects draft PRs before signing runner allocation'
+Assert-Contains -Text $workflow -Needle 'github.event.pull_request.head.repo.id == github.event.pull_request.base.repo.id' -Name 'reusable workflow rejects repository-ID mismatches before signing runner allocation'
+Assert-Contains -Text $workflow -Needle 'github.event.pull_request.head.repo.full_name == github.repository' -Name 'reusable workflow rejects cross-repository heads before signing runner allocation'
+Assert-Contains -Text $workflow -Needle 'publisher_runner_label:' -Name 'publisher runner label is a required deployment input'
+Assert-Contains -Text $caller -Needle 'publisher_runner_label: antigravity-publisher' -Name 'caller maps an isolated publisher runner'
+Assert-Contains -Text $workflow -Needle 'review_runner_identity:' -Name 'review runner identity is exported for publisher isolation'
+Assert-Contains -Text $workflow -Needle "Role = 'Publisher'" -Name 'publisher runner security preflight is required'
+Assert-Contains -Text $workflow -Needle 'ForbiddenIdentities = @($env:REVIEW_RUNNER_IDENTITY)' -Name 'publisher cannot reuse review runner identity'
+Assert-Contains -Text $workflow -Needle 'Clean persistent runner workspace' -Name 'persistent runner workspaces are cleaned before checkout'
+Assert-NotContains -Text $workflow -Needle 'actions/upload-artifact@v' -Name 'upload artifact action must not use a floating tag'
+Assert-NotContains -Text $workflow -Needle 'actions/download-artifact@v' -Name 'download artifact action must not use a floating tag'
+
+Assert-Contains -Text $workflow -Needle 'github.event.pull_request.base.ref == github.event.repository.default_branch' -Name 'reusable workflow rejects non-default-base PRs before signing runner allocation'
+Assert-Contains -Text $workflow -Needle 'Path still exists after removal' -Name 'persistent runner cleanup fails closed when removal does not complete'
+
+Assert-Contains -Text $workflow -Needle 'report_sha256:' -Name 'review exports the validated report digest'
+Assert-Contains -Text $workflow -Needle 'Hash validated report' -Name 'review hashes the validated report before artifact upload'
+Assert-Contains -Text $workflow -Needle 'Verify downloaded report digest' -Name 'publisher verifies report bytes before publication'
+Assert-Contains -Text $workflow -Needle 'needs.review.outputs.report_sha256' -Name 'publisher digest check is bound to review-job output'
