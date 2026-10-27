@@ -390,12 +390,66 @@ try {
         throw 'Expected duplicate author metadata to be rejected before signing rewrite.'
     }
 
+    $nonCanonicalIdentityPath = Join-Path $tempRoot 'noncanonical-identity.commit'
+    $nonCanonicalIdentityCommit = @(
+        "tree $baseTree",
+        "parent $baseSha",
+        'author   Spaced  Author <spaced@example.invalid> 01700000000 +0000',
+        'committer Metadata Fixture <fixture@example.invalid> 1700000002 +0000',
+        '',
+        'noncanonical identity fixture'
+    ) -join [char] 10
+
+    [System.IO.File]::WriteAllText(
+        $nonCanonicalIdentityPath,
+        $nonCanonicalIdentityCommit,
+        [System.Text.UTF8Encoding]::new($false)
+    )
+
+    $nonCanonicalIdentitySha = (
+        Invoke-Checked -FilePath 'git' -Arguments @(
+            'hash-object',
+            '-t',
+            'commit',
+            '-w',
+            '--literally',
+            $nonCanonicalIdentityPath
+        ) -WorkingDirectory $workRepo |
+        Select-Object -First 1
+    ).Trim()
+
+    $nonCanonicalIdentityParameters = @{
+        RepositoryPath = $workRepo
+        BaseSha = $baseSha
+        HeadSha = $nonCanonicalIdentitySha
+        BranchName = 'noncanonical-identity-fixture'
+        TrustedPublicKey = "$signingKey.pub"
+        SigningKey = $signingKey
+    }
+
+    $nonCanonicalIdentityRejected = $false
+    try {
+        & $gateScript @nonCanonicalIdentityParameters | Out-Null
+    }
+    catch {
+        if ($_.Exception.Message -notlike '*changed the raw author header*') {
+            throw
+        }
+
+        $nonCanonicalIdentityRejected = $true
+    }
+
+    if (-not $nonCanonicalIdentityRejected) {
+        throw 'Expected non-canonical raw author metadata to fail closed rather than be normalized.'
+    }
+
     Write-Host '[PASS] preserve mode keeps commit count and commit subjects'
     Write-Host '[PASS] final tree is unchanged'
     Write-Host '[PASS] every rewritten commit verifies with the trusted SSH key'
     Write-Host '[PASS] real remote-head race is rejected before lease-protected update'
     Write-Host '[PASS] unsupported commit headers are rejected instead of being lost during rewrite'
     Write-Host '[PASS] duplicate required commit headers are rejected instead of being collapsed during rewrite'
+    Write-Host '[PASS] raw author/committer headers must round-trip byte-for-byte through signing rewrite'
 }
 finally {
     if (Test-Path -LiteralPath $tempRoot) {

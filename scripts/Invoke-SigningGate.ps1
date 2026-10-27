@@ -321,6 +321,103 @@ function Assert-RewritableCommitHeaders {
     }
 }
 
+function Get-SingleCommitHeaderLineBase64 {
+    param(
+        [Parameter(Mandatory)]
+        [byte[]] $Bytes,
+
+        [Parameter(Mandatory)]
+        [string] $Sha,
+
+        [Parameter(Mandatory)]
+        [ValidateSet('author', 'committer')]
+        [string] $HeaderName
+    )
+
+    $headerEnd = Get-CommitHeaderBoundary -Bytes $Bytes -Sha $Sha
+    $matches = [System.Collections.Generic.List[string]]::new()
+    $lineStart = 0
+
+    while ($lineStart -lt $headerEnd) {
+        $lineEnd = $lineStart
+        while ($lineEnd -lt $headerEnd -and $Bytes[$lineEnd] -ne 10) {
+            $lineEnd++
+        }
+
+        if ($Bytes[$lineStart] -ne 32 -and $Bytes[$lineStart] -ne 9) {
+            $space = $lineStart
+            while ($space -lt $lineEnd -and $Bytes[$space] -ne 32) {
+                $space++
+            }
+
+            if ($space -gt $lineStart -and $space -lt $lineEnd) {
+                $name = [System.Text.Encoding]::ASCII.GetString(
+                    $Bytes,
+                    $lineStart,
+                    $space - $lineStart
+                )
+
+                if ($name -ceq $HeaderName) {
+                    $lineLength = $lineEnd - $lineStart
+                    $lineBytes = [byte[]]::new($lineLength)
+                    [System.Array]::Copy(
+                        $Bytes,
+                        $lineStart,
+                        $lineBytes,
+                        0,
+                        $lineLength
+                    )
+                    $matches.Add([Convert]::ToBase64String($lineBytes))
+                }
+            }
+        }
+
+        $lineStart = $lineEnd + 1
+    }
+
+    if ($matches.Count -ne 1) {
+        throw "Commit $Sha must contain exactly one raw '$HeaderName' header; found $($matches.Count)."
+    }
+
+    $matches[0]
+}
+
+function Assert-RawIdentityHeadersPreserved {
+    param(
+        [Parameter(Mandatory)]
+        [byte[]] $OriginalBytes,
+
+        [Parameter(Mandatory)]
+        [string] $OriginalSha,
+
+        [Parameter(Mandatory)]
+        [byte[]] $SignedBytes,
+
+        [Parameter(Mandatory)]
+        [string] $SignedSha
+    )
+
+    foreach ($headerName in @('author', 'committer')) {
+        $originalParameters = @{
+            Bytes = $OriginalBytes
+            Sha = $OriginalSha
+            HeaderName = $headerName
+        }
+        $signedParameters = @{
+            Bytes = $SignedBytes
+            Sha = $SignedSha
+            HeaderName = $headerName
+        }
+
+        $originalHeader = Get-SingleCommitHeaderLineBase64 @originalParameters
+        $signedHeader = Get-SingleCommitHeaderLineBase64 @signedParameters
+
+        if ($signedHeader -cne $originalHeader) {
+            throw "Signing rewrite changed the raw $headerName header for commit $OriginalSha."
+        }
+    }
+}
+
 function Get-CommitMessageBytes {
     param(
         [Parameter(Mandatory)]
@@ -412,6 +509,16 @@ function New-SignedCommit {
         if ($newTree.Trim() -ne $Record.Tree) {
             throw "Tree changed while signing commit $($Record.Sha)."
         }
+
+        $signedCommitBytes = Get-CommitObjectBytes -Sha $newSha
+        Assert-RewritableCommitHeaders -Sha $newSha -Bytes $signedCommitBytes
+        $identityParameters = @{
+            OriginalBytes = $commitBytes
+            OriginalSha = $Record.Sha
+            SignedBytes = $signedCommitBytes
+            SignedSha = $newSha
+        }
+        Assert-RawIdentityHeadersPreserved @identityParameters
 
         $null = Test-TrustedSignature -Sha $newSha -ThrowOnFailure
 
