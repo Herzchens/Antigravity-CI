@@ -203,16 +203,14 @@ jobs:
           submodules: false
 
 
-      - name: Validate PR context and sign exact feature history
-        id: sign
+      - name: Prepare exact signing target
+        id: signing_target
         shell: pwsh
         env:
           TARGET_REPOSITORY: ${{ github.repository }}
           EXPECTED_BASE_REF: ${{ github.event.repository.default_branch }}
           TARGET_PATH: ${{ github.workspace }}\target
           INFRA_PATH: ${{ github.workspace }}\infrastructure
-          TRUSTED_PUBLIC_KEY_PATH: ${{ inputs.signing_public_key_path }}
-          SIGNING_PUSH_TOKEN: ${{ secrets.signing_push_token }}
         run: |
           $ErrorActionPreference = 'Stop'
 
@@ -237,6 +235,27 @@ jobs:
           if ($LASTEXITCODE -eq 0 -and $configuredPushUrls.Count -gt 0) {
             throw 'Signing checkout must not configure a separate origin pushurl.'
           }
+
+          Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "merge_base=$mergeBase" -Encoding utf8
+          Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "head_sha=$($context.HeadSha)" -Encoding utf8
+          Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "head_ref=$($context.HeadRef)" -Encoding utf8
+          Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "expected_remote_url=$expectedRemoteUrl" -Encoding utf8
+
+
+      - name: Sign exact feature history with dedicated credential
+        id: sign
+        shell: pwsh
+        env:
+          TARGET_PATH: ${{ github.workspace }}\target
+          INFRA_PATH: ${{ github.workspace }}\infrastructure
+          TRUSTED_PUBLIC_KEY_PATH: ${{ inputs.signing_public_key_path }}
+          SIGN_BASE_SHA: ${{ steps.signing_target.outputs.merge_base }}
+          SIGN_HEAD_SHA: ${{ steps.signing_target.outputs.head_sha }}
+          SIGN_BRANCH: ${{ steps.signing_target.outputs.head_ref }}
+          EXPECTED_REMOTE_URL: ${{ steps.signing_target.outputs.expected_remote_url }}
+          SIGNING_PUSH_TOKEN: ${{ secrets.signing_push_token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
 
           if ([string]::IsNullOrWhiteSpace($env:SIGNING_PUSH_TOKEN)) {
             throw 'Dedicated signing push token is missing.'
@@ -265,13 +284,13 @@ jobs:
 
             $result = & (Join-Path $env:INFRA_PATH 'scripts\Invoke-SigningGate.ps1') `
               -RepositoryPath $env:TARGET_PATH `
-              -BaseSha $mergeBase `
-              -HeadSha $context.HeadSha `
-              -BranchName $context.HeadRef `
+              -BaseSha $env:SIGN_BASE_SHA `
+              -HeadSha $env:SIGN_HEAD_SHA `
+              -BranchName $env:SIGN_BRANCH `
               -TrustedPublicKey $env:TRUSTED_PUBLIC_KEY_PATH `
               -SigningKey $env:TRUSTED_PUBLIC_KEY_PATH `
-              -ExpectedRemoteHead $context.HeadSha `
-              -ExpectedRemoteUrl $expectedRemoteUrl `
+              -ExpectedRemoteHead $env:SIGN_HEAD_SHA `
+              -ExpectedRemoteUrl $env:EXPECTED_REMOTE_URL `
               -Push
           }
           finally {
