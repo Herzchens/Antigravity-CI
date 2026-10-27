@@ -12,6 +12,7 @@ $tests = @(
     'Test-ProjectConfig.ps1',
     'Test-SignatureVerification.ps1',
     'Test-SigningGate.ps1',
+    'Test-SigningRepositoryContract.ps1',
     'Test-AgyPrompt.ps1',
     'Test-AgyReport.ps1',
     'Test-PullRequestContext.ps1',
