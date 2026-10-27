@@ -9,7 +9,11 @@ param(
 
     [bool] $AllowNetwork = $false,
 
-    [bool] $AllowGui = $false
+    [bool] $AllowGui = $false,
+
+    [bool] $RuntimeAdbReady = $false,
+
+    [bool] $RuntimeNetworkReady = $false
 )
 
 Set-StrictMode -Version Latest
@@ -41,10 +45,22 @@ $allowed = [ordered]@{
     gui = $AllowGui
 }
 
-foreach ($name in @('adb', 'network', 'gui')) {
+if ($AllowGui -or $requested.gui) {
+    throw 'GUI/computer-use capability is out of scope for Antigravity-CI v1.'
+}
+
+foreach ($name in @('adb', 'network')) {
     if ($requested[$name] -and -not $allowed[$name]) {
         throw "Project requests capability '$name', but this runner deployment does not allow it."
     }
+}
+
+if ($requested.adb -and -not $RuntimeAdbReady) {
+    throw 'ADB was allowed by deployment policy but no verified runtime ADB boundary is active.'
+}
+
+if ($requested.network -and -not $RuntimeNetworkReady) {
+    throw 'Network was allowed by deployment policy but no verified domain-scoped runtime network boundary is active.'
 }
 
 [pscustomobject][ordered]@{
@@ -53,6 +69,8 @@ foreach ($name in @('adb', 'network', 'gui')) {
     RequestedGui = $requested.gui
     AllowedAdb = $allowed.adb
     AllowedNetwork = $allowed.network
-    AllowedGui = $allowed.gui
+    AllowedGui = $false
+    RuntimeAdbReady = $RuntimeAdbReady
+    RuntimeNetworkReady = $RuntimeNetworkReady
     Valid = $true
 }
