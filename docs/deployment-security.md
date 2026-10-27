@@ -35,6 +35,17 @@ The publisher runner must use a third OS identity and must not check out reviewe
 
 The fallback reporter token exists for initial deployments only. Do not reuse the signing branch-update credential as the reporter token.
 
+## Default-branch policy protection
+
+The default-branch caller workflow and `.agy/project.toml` are privileged policy files. There are two supported deployment modes:
+
+- **Collaborative mode:** protect the default branch, require pull requests, require at least one approving review, require Code Owner review for the privileged policy files, dismiss stale approvals after new pushes, disallow force pushes/deletions, and apply the rules to administrators where the GitHub plan permits it. Generate exact final CODEOWNERS entries with `scripts/New-PolicyCodeOwners.ps1`; the script appends the caller workflow and `.agy/project.toml` entries last because GitHub gives the last matching CODEOWNERS pattern precedence.
+- **Single-writer pilot:** only the repository owner may have write/maintain/admin authority. Treat granting another principal write-capable access as a security-boundary change that requires moving to collaborative mode before privileged review continues.
+
+GitHub currently provides protected branches, rulesets, and CODEOWNERS for private repositories only on GitHub Pro, Team, Enterprise Cloud, or Enterprise Server. A private GitHub Free repository therefore cannot claim collaborative-mode protection; keep it single-writer or change plan/visibility before adding write-capable collaborators.
+
+CODEOWNERS routing alone is not an enforcement boundary. Collaborative mode requires the matching branch protection/ruleset option that makes Code Owner approval mandatory.
+
 ## Repository integration
 
 The privileged caller uses `pull_request_target` deliberately so GitHub loads the caller workflow from the trusted base/default branch instead of from the pull-request merge ref. The caller must reject forks, drafts, non-default target branches, and repository-ID mismatches before invoking the reusable workflow. The reusable workflow independently requires the same event and repeats those checks before allocating a self-hosted runner. Never replace this entrypoint with a PR-controlled `pull_request` workflow that receives Antigravity-CI secrets or self-hosted runner labels.
@@ -44,6 +55,8 @@ Use an exact 40-character Antigravity-CI commit SHA in every caller workflow. Do
 Generate an initial caller with `scripts/New-AntigravityCaller.ps1` and provide the pinned `-AgySha256` value from the installed review-runner binary. Generate the initial project config with `scripts/New-ProjectConfig.ps1`. Review the generated files before committing them to a target repository.
 
 The real sandbox acceptance probe is intentionally setup-time/manual. Run `scripts/Test-AgySandboxSmoke.ps1 -ExpectedAgySha256 <pinned-hash>` under the dedicated review account after installing or upgrading AGY and after materially changing Windows sandbox policy.
+
+For repositories that support collaborative mode, run `scripts/New-PolicyCodeOwners.ps1 -OutputPath .github/CODEOWNERS -CodeOwner @owner-or-org/team` after generating the caller. If an existing exact policy entry names a different owner, the generator fails unless `-Force` is supplied; review that replacement deliberately.
 
 The reusable workflow rejects forks, draft pull requests, non-default target branches, repository-ID mismatches, and unapproved pull-request actions before allocating the signing runner. The same checks are repeated inside trusted PowerShell code.
 
