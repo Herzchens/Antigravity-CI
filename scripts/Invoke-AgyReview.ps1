@@ -434,6 +434,7 @@ try {
             'GITHUB_STEP_SUMMARY',
             'GITHUB_STATE',
             'GOOGLE_GEMINI_BASE_URL',
+            'GEMINI_API_KEY',
             'AGY_ADC_AUTH',
             'GOOGLE_APPLICATION_CREDENTIALS',
             'CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE',
@@ -445,7 +446,7 @@ try {
 
         foreach ($name in @($startInfo.Environment.Keys)) {
             if ($explicitSensitiveNames -contains $name -or
-                $name -match '(?i)(^|_)(token|secret|password|passwd|credential|private_key|api_key|access_key)(_|$)' -or
+                $name -match '(?i)(^|_)(token|secret|password|passwd|credentials?|private_key|api_key|access_key)(_|$)' -or
                 $name.StartsWith('GIT_CONFIG_', [StringComparison]::OrdinalIgnoreCase)) {
                 [void] $startInfo.Environment.Remove($name)
             }

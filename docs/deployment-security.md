@@ -29,6 +29,8 @@ For an initial persistent Windows pilot, use a dedicated low-privilege Windows a
 
 The review and publisher runner processes must also remain non-elevated. Do not install their runner services as LocalSystem or run them from an elevated terminal.
 
+The review runner uses the Antigravity account session cached in its dedicated Windows profile. Do not configure Gemini API-key or Google Cloud ADC authentication on that account, and do not set `GEMINI_API_KEY`, `AGY_ADC_AUTH`, `GOOGLE_GEMINI_BASE_URL`, `GOOGLE_APPLICATION_CREDENTIALS`, or `CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE`. Runner preflight rejects those authentication/provider overrides and the AGY child-process sanitizer removes them defensively.
+
 ## Publisher runner
 
 The publisher runner must use a third OS identity and must not check out reviewed PR code. Prefer a dedicated GitHub App installation token. The App should be installed only on intended repositories and have the minimum repository permission needed to create and manage the timeline comment: either Issues write or Pull requests write. Metadata read is implicit for installed Apps. The workflow also verifies the actual account that created the comment.

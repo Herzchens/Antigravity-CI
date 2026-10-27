@@ -392,6 +392,18 @@ if ($Role -eq 'Publisher') {
     return
 }
 
+foreach ($name in @(
+    'AGY_ADC_AUTH',
+    'GEMINI_API_KEY',
+    'GOOGLE_GEMINI_BASE_URL',
+    'GOOGLE_APPLICATION_CREDENTIALS',
+    'CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE'
+)) {
+    if (-not [string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($name))) {
+        throw "Review runner must use cached Antigravity account authentication; environment override '$name' is not permitted."
+    }
+}
+
 $hostPolicy = Join-Path $PSScriptRoot 'Assert-AgyHostPolicy.ps1'
 if (-not (Test-Path -LiteralPath $hostPolicy -PathType Leaf)) {
     throw 'Assert-AgyHostPolicy.ps1 is required next to Assert-RunnerSecurity.ps1.'

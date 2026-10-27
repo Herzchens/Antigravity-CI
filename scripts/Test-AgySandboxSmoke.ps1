@@ -186,17 +186,32 @@ Do not inspect or modify the probe script. Do not run any other command. After t
         $startInfo.ArgumentList.Add($argument)
     }
 
+    $explicitSensitiveNames = @(
+        'GITHUB_TOKEN',
+        'GH_TOKEN',
+        'AGY_REPORTER_TOKEN',
+        'ACTIONS_RUNTIME_TOKEN',
+        'ACTIONS_ID_TOKEN_REQUEST_TOKEN',
+        'ACTIONS_ID_TOKEN_REQUEST_URL',
+        'SSH_AUTH_SOCK',
+        'SSH_AGENT_PID',
+        'GIT_ASKPASS',
+        'SSH_ASKPASS',
+        'GOOGLE_GEMINI_BASE_URL',
+        'GEMINI_API_KEY',
+        'AGY_ADC_AUTH',
+        'GOOGLE_APPLICATION_CREDENTIALS',
+        'CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE',
+        'HTTP_PROXY',
+        'HTTPS_PROXY',
+        'ALL_PROXY',
+        'NO_PROXY'
+    )
+
     foreach ($name in @($startInfo.Environment.Keys)) {
-        if ($name -match '(?i)(^|_)(token|secret|password|passwd|credential|private_key|api_key|access_key)(_|$)' -or
-            $name -in @(
-                'GITHUB_TOKEN',
-                'GH_TOKEN',
-                'AGY_REPORTER_TOKEN',
-                'SSH_AUTH_SOCK',
-                'SSH_AGENT_PID',
-                'GIT_ASKPASS',
-                'SSH_ASKPASS'
-            )) {
+        if ($explicitSensitiveNames -contains $name -or
+            $name -match '(?i)(^|_)(token|secret|password|passwd|credentials?|private_key|api_key|access_key)(_|$)' -or
+            $name.StartsWith('GIT_CONFIG_', [StringComparison]::OrdinalIgnoreCase)) {
             [void] $startInfo.Environment.Remove($name)
         }
     }
