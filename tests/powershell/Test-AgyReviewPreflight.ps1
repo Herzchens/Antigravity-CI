@@ -131,6 +131,25 @@ try {
         & $runner @insideOutputParameters
     }
 
+    $linkedOutputDirectory = Join-Path $tempRoot 'linked-output'
+    $linkedOutputCreated = $false
+    try {
+        New-Item -ItemType SymbolicLink -Path $linkedOutputDirectory -Target $targetRepo -ErrorAction Stop | Out-Null
+        $linkedOutputCreated = $true
+    }
+    catch {
+        Write-Host '[SKIP] AGY reparse-point fixture is unavailable on this host'
+    }
+
+    if ($linkedOutputCreated) {
+        $linkedOutputParameters = $baseParameters.Clone()
+        $linkedOutputParameters.OutputPath = Join-Path $linkedOutputDirectory 'report.json'
+
+        Assert-Throws -Name 'AGY runner rejects an output path through a reparse point' -Action {
+            & $runner @linkedOutputParameters
+        }
+    }
+
     Add-Content -LiteralPath (Join-Path $targetRepo 'tracked.txt') -Value 'dirty'
 
     Assert-Throws -Name 'dirty target repository is rejected before AGY starts' -Action {

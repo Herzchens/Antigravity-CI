@@ -136,6 +136,48 @@ function Assert-OutsideRepository {
     $fullPath
 }
 
+function Assert-NoReparsePointInExistingPath {
+    param(
+        [Parameter(Mandatory)]
+        [string] $Path,
+
+        [Parameter(Mandatory)]
+        [string] $Name
+    )
+
+    $fullPath = [System.IO.Path]::GetFullPath($Path)
+    $root = [System.IO.Path]::GetPathRoot($fullPath)
+
+    if ([string]::IsNullOrWhiteSpace($root)) {
+        throw "$Name does not have a valid path root."
+    }
+
+    $current = $root
+    $relative = $fullPath.Substring($root.Length)
+    $separators = [char[]] @(
+        [System.IO.Path]::DirectorySeparatorChar,
+        [System.IO.Path]::AltDirectorySeparatorChar
+    )
+
+    foreach ($component in $relative.Split(
+        $separators,
+        [System.StringSplitOptions]::RemoveEmptyEntries
+    )) {
+        $current = Join-Path $current $component
+
+        if (-not (Test-Path -LiteralPath $current)) {
+            break
+        }
+
+        $item = Get-Item -LiteralPath $current -Force -ErrorAction Stop
+        if (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw "$Name traverses a symbolic link or reparse point."
+        }
+    }
+
+    $fullPath
+}
+
 function ConvertFrom-NullSeparatedUtf8 {
     param(
         [Parameter(Mandatory)]
@@ -174,10 +216,13 @@ $null = Get-Command git -ErrorAction Stop
 
 $RepositoryRoot = (Resolve-Path -LiteralPath $RepositoryPath -ErrorAction Stop).Path
 $script:RepositoryRoot = $RepositoryRoot
+$null = Assert-NoReparsePointInExistingPath -Path $RepositoryRoot -Name 'RepositoryPath'
 
 $outputRoot = Assert-OutsideRepository -Path $OutputDirectory -Name 'OutputDirectory'
+$null = Assert-NoReparsePointInExistingPath -Path $outputRoot -Name 'OutputDirectory'
 New-Item -ItemType Directory -Path $outputRoot -Force -ErrorAction Stop | Out-Null
 $outputRoot = (Resolve-Path -LiteralPath $outputRoot -ErrorAction Stop).Path
+$null = Assert-NoReparsePointInExistingPath -Path $outputRoot -Name 'OutputDirectory'
 
 $verifyScript = Join-Path $PSScriptRoot 'Test-CommitSignature.ps1'
 $configResolver = Join-Path $PSScriptRoot 'Resolve-ProjectConfig.ps1'

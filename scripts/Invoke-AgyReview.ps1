@@ -101,6 +101,48 @@ function Assert-OutsideRepository {
     $fullPath
 }
 
+function Assert-NoReparsePointInExistingPath {
+    param(
+        [Parameter(Mandatory)]
+        [string] $Path,
+
+        [Parameter(Mandatory)]
+        [string] $Name
+    )
+
+    $fullPath = [System.IO.Path]::GetFullPath($Path)
+    $root = [System.IO.Path]::GetPathRoot($fullPath)
+
+    if ([string]::IsNullOrWhiteSpace($root)) {
+        throw "$Name does not have a valid path root."
+    }
+
+    $current = $root
+    $relative = $fullPath.Substring($root.Length)
+    $separators = [char[]] @(
+        [System.IO.Path]::DirectorySeparatorChar,
+        [System.IO.Path]::AltDirectorySeparatorChar
+    )
+
+    foreach ($component in $relative.Split(
+        $separators,
+        [System.StringSplitOptions]::RemoveEmptyEntries
+    )) {
+        $current = Join-Path $current $component
+
+        if (-not (Test-Path -LiteralPath $current)) {
+            break
+        }
+
+        $item = Get-Item -LiteralPath $current -Force -ErrorAction Stop
+        if (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw "$Name traverses a symbolic link or reparse point."
+        }
+    }
+
+    $fullPath
+}
+
 function Get-FileHashOrMissing {
     param(
         [Parameter(Mandatory)]
@@ -222,25 +264,32 @@ $null = Get-Command git -ErrorAction Stop
 
 $RepositoryRoot = (Resolve-Path -LiteralPath $RepositoryPath -ErrorAction Stop).Path
 $script:RepositoryRoot = $RepositoryRoot
+$null = Assert-NoReparsePointInExistingPath -Path $RepositoryRoot -Name 'RepositoryPath'
 
 $resolvedPromptPath = (Resolve-Path -LiteralPath $PromptPath -ErrorAction Stop).Path
 $resolvedSchemaPath = (Resolve-Path -LiteralPath $ReportSchemaPath -ErrorAction Stop).Path
 
 $null = Assert-OutsideRepository -Path $resolvedPromptPath -Name 'PromptPath'
 $null = Assert-OutsideRepository -Path $resolvedSchemaPath -Name 'ReportSchemaPath'
+$null = Assert-NoReparsePointInExistingPath -Path $resolvedPromptPath -Name 'PromptPath'
+$null = Assert-NoReparsePointInExistingPath -Path $resolvedSchemaPath -Name 'ReportSchemaPath'
 
 $outputFullPath = Assert-OutsideRepository -Path (Get-FullPath -Path $OutputPath) -Name 'OutputPath'
+$null = Assert-NoReparsePointInExistingPath -Path $outputFullPath -Name 'OutputPath'
 $outputDirectory = Split-Path -Parent $outputFullPath
 if ([string]::IsNullOrWhiteSpace($outputDirectory)) {
     throw 'OutputPath must have a parent directory.'
 }
 New-Item -ItemType Directory -Path $outputDirectory -Force -ErrorAction Stop | Out-Null
+$null = Assert-NoReparsePointInExistingPath -Path $outputFullPath -Name 'OutputPath'
 
 $envelopeFullPath = $null
 if (-not [string]::IsNullOrWhiteSpace($EnvelopePath)) {
     $envelopeFullPath = Assert-OutsideRepository -Path (Get-FullPath -Path $EnvelopePath) -Name 'EnvelopePath'
+    $null = Assert-NoReparsePointInExistingPath -Path $envelopeFullPath -Name 'EnvelopePath'
     $envelopeDirectory = Split-Path -Parent $envelopeFullPath
     New-Item -ItemType Directory -Path $envelopeDirectory -Force -ErrorAction Stop | Out-Null
+    $null = Assert-NoReparsePointInExistingPath -Path $envelopeFullPath -Name 'EnvelopePath'
 }
 
 $prompt = Get-Content -LiteralPath $resolvedPromptPath -Raw -Encoding utf8
@@ -287,6 +336,7 @@ $agyCommand = Get-Command $AgyExecutable -CommandType Application -ErrorAction S
     Select-Object -First 1
 $agyPath = [System.IO.Path]::GetFullPath($agyCommand.Source)
 $null = Assert-OutsideRepository -Path $agyPath -Name 'AgyExecutable'
+$null = Assert-NoReparsePointInExistingPath -Path $agyPath -Name 'AgyExecutable'
 
 $reportResolver = Join-Path $PSScriptRoot 'Resolve-AgyReport.ps1'
 $processJobHelper = Join-Path $PSScriptRoot 'WindowsProcessJob.ps1'

@@ -235,6 +235,25 @@ gui = false
     Write-Host '[PASS] PR-head config capability escalation is excluded from the AGY prompt'
     Write-Host '[PASS] changed-file range excludes base-only changes'
 
+    $linkedOutput = Join-Path $tempRoot 'linked-output'
+    $linkedOutputCreated = $false
+    try {
+        New-Item -ItemType SymbolicLink -Path $linkedOutput -Target $targetRepo -ErrorAction Stop | Out-Null
+        $linkedOutputCreated = $true
+    }
+    catch {
+        Write-Host '[SKIP] preparation reparse-point fixture is unavailable on this host'
+    }
+
+    if ($linkedOutputCreated) {
+        $linkedOutputParameters = $parameters.Clone()
+        $linkedOutputParameters.OutputDirectory = $linkedOutput
+
+        Assert-Throws -Name 'review preparation rejects a reparse-point output directory' -Action {
+            & $prepare @linkedOutputParameters
+        }
+    }
+
     $wrongKeyParameters = $parameters.Clone()
     $wrongKeyParameters.TrustedPublicKey = "$wrongKey.pub"
     $wrongKeyParameters.OutputDirectory = Join-Path $tempRoot 'wrong-key-output'
