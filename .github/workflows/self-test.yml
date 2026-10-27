@@ -22,18 +22,6 @@ jobs:
           git --version
           (Get-Command ssh-keygen -ErrorAction Stop).Source
 
-      - name: Test contracts
+      - name: Run offline PowerShell suite
         shell: pwsh
-        run: ./tests/powershell/Test-Contracts.ps1
-
-      - name: Test project config loader
-        shell: pwsh
-        run: ./tests/powershell/Test-ProjectConfig.ps1
-
-      - name: Test SSH signature verification
-        shell: pwsh
-        run: ./tests/powershell/Test-SignatureVerification.ps1
-
-      - name: Test preserve-history signing gate
-        shell: pwsh
-        run: ./tests/powershell/Test-SigningGate.ps1
+        run: ./tests/powershell/Invoke-AllTests.ps1
