@@ -126,3 +126,66 @@ Assert-Contains -Needle 'user_environment_write_succeeded' -Name 'user environme
 Assert-Contains -Needle 'UserEnvironmentPersistenceBlocked = $true' -Name 'user environment persistence isolation is an explicit acceptance invariant'
 Assert-Contains -Needle 'UserEnvironmentBoundary = if ($hostUserEnvironmentWriteAllowed) { ''sandbox'' } else { ''host-account-policy'' }' -Name 'user environment boundary records sandbox versus host-policy enforcement'
 Assert-Contains -Needle '$userEnvironmentName,' -Name 'user environment sentinel is deleted during cleanup'
+
+# Embedded C# compilation and method-signature regression tests
+$idxSentinel = $smoke.IndexOf('public static class AntigravityCiCredentialSentinel')
+$idxEndSentinel = $smoke.IndexOf('public static class AntigravityCiProcessBoundary')
+if ($idxSentinel -lt 0 -or $idxEndSentinel -le $idxSentinel) {
+    throw 'Could not locate AntigravityCiCredentialSentinel definition in smoke script.'
+}
+$sentinelCode = 'using System; using System.Runtime.InteropServices; using System.Runtime.InteropServices.ComTypes; using System.Text; ' +
+    $smoke.Substring($idxSentinel, $idxEndSentinel - $idxSentinel)
+$sentinelCode = $sentinelCode.Substring(0, $sentinelCode.LastIndexOf('}') + 1)
+Add-Type -TypeDefinition $sentinelCode -Language CSharp -ErrorAction Stop
+
+$idxProcess = $smoke.IndexOf('public static class AntigravityCiProcessBoundary')
+$idxEndProcess = $smoke.IndexOf('Get-Command schtasks.exe', $idxProcess)
+if ($idxProcess -lt 0 -or $idxEndProcess -le $idxProcess) {
+    throw 'Could not locate AntigravityCiProcessBoundary definition in smoke script.'
+}
+$processCode = 'using System; using System.Runtime.InteropServices; ' +
+    $smoke.Substring($idxProcess, $idxEndProcess - $idxProcess)
+$processCode = $processCode.Substring(0, $processCode.LastIndexOf('}') + 1)
+Add-Type -TypeDefinition $processCode -Language CSharp -ErrorAction Stop
+
+$idxProbe = $smoke.IndexOf('public static class AntigravityCiCredentialProbe')
+$idxEndProbe = $smoke.IndexOf('$result.credential_read_succeeded', $idxProbe)
+if ($idxProbe -lt 0 -or $idxEndProbe -le $idxProbe) {
+    throw 'Could not locate AntigravityCiCredentialProbe definition in smoke script.'
+}
+$probeCode = 'using System; using System.Runtime.InteropServices; using System.Runtime.InteropServices.ComTypes; using System.Text; ' +
+    $smoke.Substring($idxProbe, $idxEndProbe - $idxProbe)
+$probeCode = $probeCode.Substring(0, $probeCode.LastIndexOf('}') + 1)
+Add-Type -TypeDefinition $probeCode -Language CSharp -ErrorAction Stop
+
+$sentinelWrite = [AntigravityCiCredentialSentinel].GetMethod('Write', [type[]]@([string], [string], [string]))
+$sentinelCanRead = [AntigravityCiCredentialSentinel].GetMethod('CanRead', [type[]]@([string]))
+$sentinelDelete = [AntigravityCiCredentialSentinel].GetMethod('Delete', [type[]]@([string]))
+if ($null -eq $sentinelWrite -or $sentinelWrite.ReturnType -ne [System.Void]) {
+    throw 'AntigravityCiCredentialSentinel.Write must be defined and return void.'
+}
+if ($null -eq $sentinelCanRead -or $sentinelCanRead.ReturnType -ne [System.Boolean]) {
+    throw 'AntigravityCiCredentialSentinel.CanRead must be defined and return bool.'
+}
+if ($null -eq $sentinelDelete -or $sentinelDelete.ReturnType -ne [System.Void]) {
+    throw 'AntigravityCiCredentialSentinel.Delete must be defined and return void.'
+}
+Write-Host '[PASS] AntigravityCiCredentialSentinel compiles with throwing void Write and host sentinel methods'
+
+$probeWrite = [AntigravityCiCredentialProbe].GetMethod('Write', [type[]]@([string], [string], [string]))
+$probeCanRead = [AntigravityCiCredentialProbe].GetMethod('CanRead', [type[]]@([string]))
+if ($null -eq $probeWrite -or $probeWrite.ReturnType -ne [System.Boolean]) {
+    throw 'AntigravityCiCredentialProbe.Write must be defined and return bool.'
+}
+if ($null -eq $probeCanRead -or $probeCanRead.ReturnType -ne [System.Boolean]) {
+    throw 'AntigravityCiCredentialProbe.CanRead must be defined and return bool.'
+}
+Write-Host '[PASS] AntigravityCiCredentialProbe compiles with non-throwing bool Write and CanRead probing methods'
+
+$procRead = [AntigravityCiProcessBoundary].GetMethod('CanReadMemory', [type[]]@([int]))
+$procTerm = [AntigravityCiProcessBoundary].GetMethod('CanTerminate', [type[]]@([int]))
+if ($null -eq $procRead -or $procRead.ReturnType -ne [System.Boolean] -or
+    $null -eq $procTerm -or $procTerm.ReturnType -ne [System.Boolean]) {
+    throw 'AntigravityCiProcessBoundary methods must be defined and return bool.'
+}
+Write-Host '[PASS] AntigravityCiProcessBoundary compiles with memory-read and termination probe methods'

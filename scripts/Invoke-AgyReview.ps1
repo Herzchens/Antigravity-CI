@@ -548,8 +548,8 @@ try {
             $process.WaitForExit()
         }
 
-        $stdoutTask.GetAwaiter().GetResult()
-        $stderrTask.GetAwaiter().GetResult()
+        $null = $stdoutTask.GetAwaiter().GetResult()
+        $null = $stderrTask.GetAwaiter().GetResult()
         $stdoutStream.Flush()
         $stderrStream.Flush()
         $stdoutLength = $stdoutStream.Length

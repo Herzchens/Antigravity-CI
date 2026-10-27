@@ -289,7 +289,7 @@ function Get-CommitObjectBytes {
         $stderrTask = $process.StandardError.ReadToEndAsync()
 
         $process.WaitForExit()
-        $stdoutTask.GetAwaiter().GetResult()
+        $null = $stdoutTask.GetAwaiter().GetResult()
         $null = $stderrTask.GetAwaiter().GetResult()
 
         if ($process.ExitCode -ne 0) {

@@ -115,7 +115,7 @@ if (-not $matchesSchema) {
     throw 'AGY report does not match schemas/agy-report.schema.json.'
 }
 
-$report = ConvertFrom-Json -InputObject $reportJson -Depth 32 -ErrorAction Stop
+$report = ConvertFrom-Json -InputObject $reportJson -Depth 32 -DateKind String -ErrorAction Stop
 
 if ([string] $report.repo -cne $ExpectedRepository) {
     throw 'AGY report repository does not match the expected repository.'

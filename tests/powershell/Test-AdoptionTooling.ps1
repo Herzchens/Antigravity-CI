@@ -72,11 +72,11 @@ try {
         throw 'Generated caller workflow does not expose the GitHub App reporter secret mapping.'
     }
 
-    if ($callerText -notmatch '(?m)^  pull_request_target:$') {
+    if ($callerText -notmatch '(?m)^  pull_request_target:\r?$') {
         throw 'Generated caller workflow does not use the trusted-base pull_request_target entrypoint.'
     }
 
-    if ($callerText -match '(?m)^  pull_request:$') {
+    if ($callerText -match '(?m)^  pull_request:\r?$') {
         throw 'Generated caller workflow must not use a PR-controlled pull_request entrypoint.'
     }
 

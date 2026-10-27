@@ -97,38 +97,6 @@ public static class AntigravityCiCredentialSentinel
         }
     }
 
-    public static bool Write(string target, string userName, string secret)
-    {
-        byte[] blob = Encoding.Unicode.GetBytes(secret);
-        IntPtr blobPointer = Marshal.AllocCoTaskMem(blob.Length);
-
-        try
-        {
-            Marshal.Copy(blob, 0, blobPointer, blob.Length);
-
-            CREDENTIAL credential = new CREDENTIAL
-            {
-                Flags = 0,
-                Type = 1,
-                TargetName = target,
-                Comment = "Antigravity-CI sandbox write probe",
-                CredentialBlobSize = (UInt32)blob.Length,
-                CredentialBlob = blobPointer,
-                Persist = 1,
-                AttributeCount = 0,
-                Attributes = IntPtr.Zero,
-                TargetAlias = null,
-                UserName = userName
-            };
-
-            return CredWrite(ref credential, 0);
-        }
-        finally
-        {
-            Marshal.FreeCoTaskMem(blobPointer);
-        }
-    }
-
     public static bool CanRead(string target)
     {
         IntPtr credential = IntPtr.Zero;
@@ -470,6 +438,38 @@ public static class AntigravityCiCredentialProbe
 
     [DllImport("Advapi32.dll")]
     private static extern void CredFree(IntPtr credential);
+
+    public static bool Write(string target, string userName, string secret)
+    {
+        byte[] blob = Encoding.Unicode.GetBytes(secret);
+        IntPtr blobPointer = Marshal.AllocCoTaskMem(blob.Length);
+
+        try
+        {
+            Marshal.Copy(blob, 0, blobPointer, blob.Length);
+
+            CREDENTIAL credential = new CREDENTIAL
+            {
+                Flags = 0,
+                Type = 1,
+                TargetName = target,
+                Comment = "Antigravity-CI sandbox write probe",
+                CredentialBlobSize = (UInt32)blob.Length,
+                CredentialBlob = blobPointer,
+                Persist = 1,
+                AttributeCount = 0,
+                Attributes = IntPtr.Zero,
+                TargetAlias = null,
+                UserName = userName
+            };
+
+            return CredWrite(ref credential, 0);
+        }
+        finally
+        {
+            Marshal.FreeCoTaskMem(blobPointer);
+        }
+    }
 
     public static bool CanRead(string target)
     {
@@ -815,8 +815,8 @@ Do not inspect or modify the probe script. Do not run any other command. After t
         $process.WaitForExit()
     }
 
-    $stdoutTask.GetAwaiter().GetResult()
-    $stderrTask.GetAwaiter().GetResult()
+    $null = $stdoutTask.GetAwaiter().GetResult()
+    $null = $stderrTask.GetAwaiter().GetResult()
     $stdoutStream.Flush()
     $stderrStream.Flush()
     $stdoutLength = $stdoutStream.Length

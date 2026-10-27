@@ -40,7 +40,7 @@ foreach ($command in @('git', 'ssh-keygen')) {
     }
 }
 
-$sshKeygenProgram = (Get-Command ssh-keygen -ErrorAction Stop).Source
+$sshKeygenProgram = (Get-Command ssh-keygen -ErrorAction Stop | Select-Object -First 1).Source
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $verificationScript = Join-Path $repoRoot 'scripts\Test-CommitSignature.ps1'

@@ -44,7 +44,7 @@ function Invoke-PrePushGuard {
         [string] $InputText
     )
 
-    $pwsh = (Get-Command pwsh -CommandType Application -ErrorAction Stop).Source
+    $pwsh = (Get-Command pwsh -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
     $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
     $startInfo.FileName = $pwsh
     $startInfo.UseShellExecute = $false

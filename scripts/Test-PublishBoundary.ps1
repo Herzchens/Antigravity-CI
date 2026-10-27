@@ -48,7 +48,7 @@ function Invoke-GitBytes {
         $copyTask = $process.StandardOutput.BaseStream.CopyToAsync($memory)
         $errorTask = $process.StandardError.ReadToEndAsync()
         $process.WaitForExit()
-        $copyTask.GetAwaiter().GetResult()
+        $null = $copyTask.GetAwaiter().GetResult()
         $null = $errorTask.GetAwaiter().GetResult()
 
         if ($process.ExitCode -ne 0) {
@@ -89,7 +89,6 @@ function ConvertFrom-NulPaths {
 
     $utf8 = [System.Text.UTF8Encoding]::new($false, $true)
     $paths = [System.Collections.Generic.List[string]]::new()
-$checkedCommitCount = 0
     $start = 0
 
     for ($index = 0; $index -le $Bytes.Length; $index++) {
@@ -158,6 +157,7 @@ $RepositoryRoot = (Resolve-Path -LiteralPath $RepositoryPath -ErrorAction Stop).
 $script:RepositoryRoot = $RepositoryRoot
 
 $paths = [System.Collections.Generic.List[string]]::new()
+$checkedCommitCount = 0
 
 if ($PSCmdlet.ParameterSetName -eq 'Staged') {
     $bytes = Invoke-GitBytes -Arguments @(

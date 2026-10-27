@@ -53,7 +53,7 @@ function ConvertTo-SafeHtmlText {
     }
 
     if (-not $Code) {
-        $text = [regex]::Replace($text, '([\\`*_{}\[\]()#+\-.!|>~])', '\$1')
+        $text = [regex]::Replace($text, '([\\`*_{}\[\]()#+\-.!|~])', '\$1')
     }
 
     $encoded = [System.Net.WebUtility]::HtmlEncode($text)

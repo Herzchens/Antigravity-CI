@@ -97,7 +97,7 @@ function Get-PropertyValue {
         return $null
     }
 
-    $property.Value
+    , $property.Value
 }
 
 $resolvedSettingsPath = (Resolve-Path -LiteralPath $SettingsPath -ErrorAction Stop).Path

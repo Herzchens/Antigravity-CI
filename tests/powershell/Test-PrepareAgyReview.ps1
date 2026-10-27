@@ -67,7 +67,7 @@ foreach ($command in @('git', 'ssh-keygen')) {
     }
 }
 
-$sshKeygenProgram = (Get-Command ssh-keygen -ErrorAction Stop).Source
+$sshKeygenProgram = (Get-Command ssh-keygen -ErrorAction Stop | Select-Object -First 1).Source
 
 $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) (
     'antigravity-ci-review-preparation-' + [Guid]::NewGuid().ToString('N')
