@@ -34,6 +34,8 @@ param(
 
     [string] $AgyExecutable = 'agy',
 
+    [string] $HomeDirectory = $HOME,
+
     [ValidateRange(30, 3600)]
     [int] $PrintTimeoutSeconds = 1200,
 
@@ -340,15 +342,15 @@ $null = Assert-NoReparsePointInExistingPath -Path $agyPath -Name 'AgyExecutable'
 
 $reportResolver = Join-Path $PSScriptRoot 'Resolve-AgyReport.ps1'
 $processJobHelper = Join-Path $PSScriptRoot 'WindowsProcessJob.ps1'
+$hostPolicy = Join-Path $PSScriptRoot 'Assert-AgyHostPolicy.ps1'
 
-if (-not (Test-Path -LiteralPath $reportResolver -PathType Leaf)) {
-    throw 'Resolve-AgyReport.ps1 is required next to Invoke-AgyReview.ps1.'
+foreach ($requiredScript in @($reportResolver, $processJobHelper, $hostPolicy)) {
+    if (-not (Test-Path -LiteralPath $requiredScript -PathType Leaf)) {
+        throw "Required AGY review helper is missing: $requiredScript"
+    }
 }
 
-if (-not (Test-Path -LiteralPath $processJobHelper -PathType Leaf)) {
-    throw 'WindowsProcessJob.ps1 is required next to Invoke-AgyReview.ps1.'
-}
-
+$initialHostPolicy = & $hostPolicy -HomeDirectory $HomeDirectory
 . $processJobHelper
 
 $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) (
@@ -414,7 +416,15 @@ try {
             'GITHUB_OUTPUT',
             'GITHUB_PATH',
             'GITHUB_STEP_SUMMARY',
-            'GITHUB_STATE'
+            'GITHUB_STATE',
+            'GOOGLE_GEMINI_BASE_URL',
+            'AGY_ADC_AUTH',
+            'GOOGLE_APPLICATION_CREDENTIALS',
+            'CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE',
+            'HTTP_PROXY',
+            'HTTPS_PROXY',
+            'ALL_PROXY',
+            'NO_PROXY'
         )
 
         foreach ($name in @($startInfo.Environment.Keys)) {
@@ -601,6 +611,11 @@ try {
         -ExpectedHooksDigest $initialHooksDigest `
         -ExpectedInfoDigest $initialInfoDigest `
         -ExpectedObjectsInfoDigest $initialObjectsInfoDigest
+
+    $finalHostPolicy = & $hostPolicy -HomeDirectory $HomeDirectory
+    if ($finalHostPolicy.SettingsSha256 -cne $initialHostPolicy.SettingsSha256) {
+        throw 'Antigravity review-account settings changed during the review run.'
+    }
 
     if ($null -ne $runFailure) {
         throw $runFailure

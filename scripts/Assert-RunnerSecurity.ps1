@@ -240,6 +240,12 @@ if ($Role -eq 'Publisher') {
     return
 }
 
+$hostPolicy = Join-Path $PSScriptRoot 'Assert-AgyHostPolicy.ps1'
+if (-not (Test-Path -LiteralPath $hostPolicy -PathType Leaf)) {
+    throw 'Assert-AgyHostPolicy.ps1 is required next to Assert-RunnerSecurity.ps1.'
+}
+$hostPolicyResult = & $hostPolicy -HomeDirectory $resolvedHomeDirectory
+
 $agyCommand = Get-Command $AgyExecutable -CommandType Application -ErrorAction Stop |
     Select-Object -First 1
 $agyPath = [System.IO.Path]::GetFullPath($agyCommand.Source)
@@ -270,6 +276,7 @@ foreach ($requiredFlag in @(
     AgyPath = $agyPath
     TrustedKeyFingerprint = $trustedFingerprint
     SshAgentIdentityCount = $agentKeys.Count
+    AgySettingsSha256 = $hostPolicyResult.SettingsSha256
     Valid = $true
     SandboxRuntimeStillRequiresSmokeTest = $true
 }

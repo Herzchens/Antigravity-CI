@@ -47,6 +47,19 @@ $fakeAgy = Join-Path $fakeBin 'agy.cmd'
 New-Item -ItemType Directory -Path $fakeBin -Force | Out-Null
 New-Item -ItemType Directory -Path $fakeHome -Force | Out-Null
 
+$settingsDir = Join-Path $fakeHome '.gemini\antigravity-cli'
+$settingsPath = Join-Path $settingsDir 'settings.json'
+New-Item -ItemType Directory -Path $settingsDir -Force | Out-Null
+$settingsFixture = [ordered]@{
+    enableTerminalSandbox = $true
+    toolPermission = 'proceed-in-sandbox'
+    allowNonWorkspaceAccess = $false
+    historySize = 0
+    disableSlashCommands = $true
+    permissions = [ordered]@{ allow = @() }
+}
+$settingsFixture | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $settingsPath -Encoding utf8NoBOM
+
 $oldPath = $env:PATH
 $oldGlobalConfig = $env:GIT_CONFIG_GLOBAL
 $oldSensitive = @{}

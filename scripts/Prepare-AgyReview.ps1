@@ -227,8 +227,9 @@ $null = Assert-NoReparsePointInExistingPath -Path $outputRoot -Name 'OutputDirec
 $verifyScript = Join-Path $PSScriptRoot 'Test-CommitSignature.ps1'
 $configResolver = Join-Path $PSScriptRoot 'Resolve-ProjectConfig.ps1'
 $promptGenerator = Join-Path $PSScriptRoot 'New-AgyPrompt.ps1'
+$workspaceTrust = Join-Path $PSScriptRoot 'Assert-AgyWorkspaceTrust.ps1'
 
-foreach ($requiredScript in @($verifyScript, $configResolver, $promptGenerator)) {
+foreach ($requiredScript in @($verifyScript, $configResolver, $promptGenerator, $workspaceTrust)) {
     if (-not (Test-Path -LiteralPath $requiredScript -PathType Leaf)) {
         throw "Required review helper is missing: $requiredScript"
     }
@@ -256,6 +257,13 @@ $headResolved = (
 if ($baseResolved -ne $BaseSha -or $headResolved -ne $HeadSha) {
     throw 'Resolved base/head commit does not match the expected SHA.'
 }
+
+$workspaceTrustParameters = @{
+    RepositoryPath = $RepositoryRoot
+    BaseSha = $baseResolved
+    HeadSha = $headResolved
+}
+& $workspaceTrust @workspaceTrustParameters | Out-Null
 
 $mergeBase = (
     (Invoke-Git -Arguments @('merge-base', $baseResolved, $headResolved)).Output |
