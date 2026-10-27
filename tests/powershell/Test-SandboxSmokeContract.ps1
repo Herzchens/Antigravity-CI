@@ -61,3 +61,11 @@ Assert-Contains -Needle 'credential_probe_completed' -Name 'credential probe mus
 Assert-Contains -Needle 'credential_read_succeeded' -Name 'credential read outcome is asserted'
 Assert-Contains -Needle 'CredentialManagerReadBlocked = $true' -Name 'Credential Manager isolation is an explicit acceptance invariant'
 Assert-Contains -Needle '[AntigravityCiCredentialSentinel]::Delete($credentialTarget)' -Name 'credential sentinel is deleted during cleanup'
+
+Assert-Contains -Needle 'schtasks.exe /Create' -Name 'sandbox smoke probes Windows Task Scheduler registration'
+Assert-Contains -Needle 'Antigravity-CI-Sandbox-Control-' -Name 'host control fixture proves Task Scheduler registration is available outside sandbox'
+Assert-Contains -Needle 'scheduled_task_probe_completed' -Name 'Task Scheduler probe must execute before acceptance'
+Assert-Contains -Needle 'scheduled_task_create_succeeded' -Name 'Task Scheduler creation outcome is asserted'
+Assert-Contains -Needle 'schtasks.exe /Query /TN $taskName' -Name 'host verifies no sandbox task registration persisted'
+Assert-Contains -Needle 'ScheduledTaskRegistrationBlocked = $true' -Name 'Task Scheduler isolation is an explicit acceptance invariant'
+Assert-Contains -Needle 'schtasks.exe /Delete /TN $cleanupTaskName' -Name 'Task Scheduler sentinels are deleted during cleanup'
