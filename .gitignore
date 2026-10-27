@@ -1,0 +1,13 @@
+# Local-only planning and handoff artifacts.
+# This is defense-in-depth only; governance still requires pre-commit/push checks.
+PLAN.md
+PLAN*.md
+HANDOFF.md
+HANDOFF*.md
+*HANDOFF*.md
+AGENTS.md
+
+# Local test/runtime output.
+*.log
+tmp/
+temp/

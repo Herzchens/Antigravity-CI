@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "project": {
+    "name": "Example",
+    "type": "rust-android"
+  },
+  "build": {
+    "windows": "cargo build --workspace",
+    "android": ".\\gradlew.bat assembleDebug"
+  },
+  "test": {
+    "windows": "cargo test --workspace",
+    "android": ".\\gradlew.bat connectedDebugAndroidTest"
+  },
+  "features": {
+    "adb": true,
+    "network": false,
+    "gui": false
+  }
+}

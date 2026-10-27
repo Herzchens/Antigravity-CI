@@ -1,0 +1,81 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Herzchens/Antigravity-CI/schemas/project-config.schema.json",
+  "title": "Antigravity-CI project configuration",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "project",
+    "features"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "project": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "type"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "type": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[a-z0-9][a-z0-9._-]*$"
+        }
+      }
+    },
+    "build": {
+      "$ref": "#/$defs/commandSet"
+    },
+    "test": {
+      "$ref": "#/$defs/commandSet"
+    },
+    "lint": {
+      "$ref": "#/$defs/commandSet"
+    },
+    "features": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "adb",
+        "network",
+        "gui"
+      ],
+      "properties": {
+        "adb": {
+          "type": "boolean"
+        },
+        "network": {
+          "type": "boolean"
+        },
+        "gui": {
+          "type": "boolean"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "commandSet": {
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": {
+        "pattern": "^[a-z][a-z0-9_-]*$"
+      },
+      "additionalProperties": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 4096
+      }
+    }
+  }
+}

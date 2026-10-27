@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "project": {
+    "name": "Example",
+    "type": "rust-android"
+  },
+  "features": {
+    "adb": true,
+    "network": false,
+    "gui": false,
+    "admin": true
+  }
+}
