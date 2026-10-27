@@ -75,12 +75,24 @@ try {
         & $gate -ProjectConfigPath $networkPath
     }
 
-    $networkAllowed = & $gate -ProjectConfigPath $networkPath -AllowNetwork $true
-    if (-not $networkAllowed.Valid -or -not $networkAllowed.RequestedNetwork) {
-        throw 'Explicitly allowed network capability did not validate.'
+    Assert-Throws -Name 'deployment allow alone cannot activate network capability' -Action {
+        & $gate -ProjectConfigPath $networkPath -AllowNetwork $true
     }
 
-    Write-Host '[PASS] deployment must explicitly allow a requested capability'
+    $networkParameters = @{
+        ProjectConfigPath = $networkPath
+        AllowNetwork = $true
+        RuntimeNetworkReady = $true
+    }
+    $networkReady = & $gate @networkParameters
+
+    if (-not $networkReady.Valid -or
+        -not $networkReady.RequestedNetwork -or
+        -not $networkReady.RuntimeNetworkReady) {
+        throw 'Two-key network capability gate did not validate.'
+    }
+
+    Write-Host '[PASS] sensitive capability needs deployment approval plus verified runtime readiness'
 
     $allPath = Join-Path $tempRoot 'all.json'
     @{
@@ -96,9 +108,51 @@ try {
         }
     } | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $allPath -Encoding utf8NoBOM
 
-    Assert-Throws -Name 'partial deployment allowance cannot satisfy extra capabilities' -Action {
-        & $gate -ProjectConfigPath $allPath -AllowAdb $true -AllowNetwork $true
+    $allParameters = @{
+        ProjectConfigPath = $allPath
+        AllowAdb = $true
+        AllowNetwork = $true
+        AllowGui = $true
+        RuntimeAdbReady = $true
+        RuntimeNetworkReady = $true
     }
+
+    Assert-Throws -Name 'GUI remains out of scope even when deployment flag is enabled' -Action {
+        & $gate @allParameters
+    }
+
+    $adbOnlyPath = Join-Path $tempRoot 'adb.json'
+    @{
+        schema_version = 1
+        project = @{
+            name = 'Adb'
+            type = 'android'
+        }
+        features = @{
+            adb = $true
+            network = $false
+            gui = $false
+        }
+    } | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $adbOnlyPath -Encoding utf8NoBOM
+
+    Assert-Throws -Name 'deployment allow alone cannot activate ADB capability' -Action {
+        & $gate -ProjectConfigPath $adbOnlyPath -AllowAdb $true
+    }
+
+    $adbParameters = @{
+        ProjectConfigPath = $adbOnlyPath
+        AllowAdb = $true
+        RuntimeAdbReady = $true
+    }
+    $adbReady = & $gate @adbParameters
+
+    if (-not $adbReady.Valid -or
+        -not $adbReady.RequestedAdb -or
+        -not $adbReady.RuntimeAdbReady) {
+        throw 'Two-key ADB capability gate did not validate.'
+    }
+
+    Write-Host '[PASS] ADB also requires independent runtime readiness'
 }
 finally {
     if (Test-Path -LiteralPath $tempRoot) {

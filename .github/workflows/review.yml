@@ -43,17 +43,17 @@ on:
         default: 1200
         type: number
       allow_adb:
-        description: Deployment ceiling for ADB access requested by trusted project config.
+        description: Deployment ceiling only. ADB still fails closed until an independently verified runtime boundary is wired.
         required: false
         default: false
         type: boolean
       allow_network:
-        description: Deployment ceiling for network access requested by trusted project config.
+        description: Deployment ceiling only. Network still fails closed until a domain-scoped runtime boundary is verified.
         required: false
         default: false
         type: boolean
       allow_gui:
-        description: Deployment ceiling for GUI automation requested by trusted project config.
+        description: Reserved compatibility input. GUI/computer use is rejected in v1.
         required: false
         default: false
         type: boolean
@@ -367,7 +367,7 @@ jobs:
             -TrustedPublicKey $env:TRUSTED_PUBLIC_KEY_PATH `
             -OutputDirectory $stateRoot | Out-Null
 
-      - name: Enforce deployment capability ceiling
+      - name: Enforce capability ceiling and runtime readiness
         shell: pwsh
         env:
           INFRA_PATH: ${{ github.workspace }}\infrastructure

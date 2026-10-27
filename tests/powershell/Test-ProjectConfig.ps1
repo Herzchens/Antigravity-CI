@@ -47,7 +47,7 @@ if ($resolved.build.windows -ne 'cargo build --workspace') {
     throw 'Template build.windows was not parsed correctly.'
 }
 
-if (-not $resolved.features.adb -or $resolved.features.network -or $resolved.features.gui) {
+if ($resolved.features.adb -or $resolved.features.network -or $resolved.features.gui) {
     throw 'Template feature flags were not parsed correctly.'
 }
 

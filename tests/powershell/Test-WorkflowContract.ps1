@@ -90,7 +90,7 @@ Assert-Contains -Text $caller -Needle '@REPLACE_WITH_PINNED_COMMIT_SHA' -Name 'c
 Assert-NotContains -Text $caller -Needle 'secrets: inherit' -Name 'caller maps secrets explicitly'
 
 
-Assert-Contains -Text $workflow -Needle 'Enforce deployment capability ceiling' -Name 'trusted project capabilities are checked before AGY'
+Assert-Contains -Text $workflow -Needle 'Enforce capability ceiling and runtime readiness' -Name 'trusted project capabilities are checked before AGY'
 Assert-Contains -Text $workflow -Needle 'default: false' -Name 'deployment capabilities default to denied'
 
 
@@ -113,7 +113,7 @@ Assert-Contains -Text $workflow -Needle 'github.event.pull_request.draft == fals
 Assert-Contains -Text $workflow -Needle 'github.event.pull_request.head.repo.id == github.event.pull_request.base.repo.id' -Name 'reusable workflow rejects repository-ID mismatches before signing runner allocation'
 Assert-Contains -Text $workflow -Needle 'github.event.pull_request.head.repo.full_name == github.repository' -Name 'reusable workflow rejects cross-repository heads before signing runner allocation'
 Assert-Contains -Text $workflow -Needle 'publisher_runner_label:' -Name 'publisher runner label is a required deployment input'
-Assert-Contains -Text $caller -Needle 'publisher_runner_label: antigravity-publisher' -Name 'caller maps an isolated publisher runner'
+Assert-Contains -Text $caller -Needle 'publisher_runner_label: REPLACE_WITH_PUBLISHER_RUNNER_LABEL' -Name 'caller requires an isolated publisher runner label'
 Assert-Contains -Text $workflow -Needle 'review_runner_identity:' -Name 'review runner identity is exported for publisher isolation'
 Assert-Contains -Text $workflow -Needle "Role = 'Publisher'" -Name 'publisher runner security preflight is required'
 Assert-Contains -Text $workflow -Needle 'ForbiddenIdentities = @($env:REVIEW_RUNNER_IDENTITY)' -Name 'publisher cannot reuse review runner identity'
