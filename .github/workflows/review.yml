@@ -27,6 +27,11 @@ on:
         description: GitHub login expected to own the AGY report comment.
         required: true
         type: string
+      reporter_app_client_id:
+        description: Optional GitHub App client ID for the preferred report-publisher identity.
+        required: false
+        default: ''
+        type: string
       agy_executable:
         description: Antigravity CLI executable or absolute path.
         required: false
@@ -56,9 +61,12 @@ on:
       signing_push_token:
         description: Dedicated write credential used only to update the signed PR branch. Must trigger pull_request synchronize events.
         required: true
+      reporter_app_private_key:
+        description: Optional GitHub App private key used only by the isolated publisher job.
+        required: false
       reporter_token:
-        description: Credential for the distinct report-publisher identity.
-        required: true
+        description: Optional fallback token for the distinct report-publisher identity when no GitHub App client ID is configured.
+        required: false
       infrastructure_read_token:
         description: Optional read credential for this workflow repository when it is private and differs from the caller repository.
         required: false
@@ -549,7 +557,38 @@ jobs:
             -PrNumber ([int] $env:TARGET_PR) `
             -ExpectedHeadSha $env:TARGET_HEAD | Out-Null
 
-      - name: Publish report with distinct identity
+      - name: Create GitHub App reporter token
+        id: reporter_app
+        if: inputs.reporter_app_client_id != ''
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1
+        with:
+          client-id: ${{ inputs.reporter_app_client_id }}
+          private-key: ${{ secrets.reporter_app_private_key }}
+
+      - name: Publish report with GitHub App identity
+        if: inputs.reporter_app_client_id != ''
+        shell: pwsh
+        env:
+          AGY_REPORTER_TOKEN: ${{ steps.reporter_app.outputs.token }}
+          TARGET_REPOSITORY: ${{ github.repository }}
+          TARGET_PR: ${{ github.event.pull_request.number }}
+          TARGET_HEAD: ${{ github.event.pull_request.head.sha }}
+          INFRA_PATH: ${{ github.workspace }}\infrastructure
+          REVIEW_RUN_ID: ${{ github.run_id }}.${{ github.run_attempt }}
+          EXPECTED_REPORTER_LOGIN: ${{ inputs.expected_reporter_login }}
+        run: |
+          $stateRoot = Join-Path $env:RUNNER_TEMP ('antigravity-ci\' + $env:GITHUB_RUN_ID + '-' + $env:GITHUB_RUN_ATTEMPT)
+
+          & (Join-Path $env:INFRA_PATH 'scripts\Publish-AgyReport.ps1') `
+            -ReportPath (Join-Path $stateRoot 'agy-report.json') `
+            -ExpectedRepository $env:TARGET_REPOSITORY `
+            -ExpectedPr ([int] $env:TARGET_PR) `
+            -ExpectedHeadSha $env:TARGET_HEAD `
+            -ExpectedRunId $env:REVIEW_RUN_ID `
+            -ExpectedReporterLogin $env:EXPECTED_REPORTER_LOGIN | Out-Null
+
+      - name: Publish report with fallback token identity
+        if: inputs.reporter_app_client_id == ''
         shell: pwsh
         env:
           AGY_REPORTER_TOKEN: ${{ secrets.reporter_token }}
