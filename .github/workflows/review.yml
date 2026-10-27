@@ -190,23 +190,11 @@ jobs:
           Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "trusted_fingerprint=$($security.TrustedKeyFingerprint)" -Encoding utf8
 
 
-      - name: Checkout exact PR head for signing
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          ref: ${{ github.event.pull_request.head.sha }}
-          fetch-depth: 0
-          persist-credentials: false
-          set-safe-directory: false
-          token: ${{ github.token }}
-          path: target
-          lfs: false
-          submodules: false
-
-
-      - name: Prepare exact signing target
+      - name: Prepare bare signing target
         id: signing_target
         shell: pwsh
         env:
+          GITHUB_TOKEN: ${{ github.token }}
           TARGET_REPOSITORY: ${{ github.repository }}
           EXPECTED_BASE_REF: ${{ github.event.repository.default_branch }}
           TARGET_PATH: ${{ github.workspace }}\target
@@ -220,26 +208,18 @@ jobs:
             -ExpectedRepository $env:TARGET_REPOSITORY `
             -ExpectedBaseRef $env:EXPECTED_BASE_REF
 
-          $mergeBase = (& git -C $env:TARGET_PATH merge-base $context.BaseSha $context.HeadSha).Trim().ToLowerInvariant()
-          if ($mergeBase -notmatch '^[0-9a-f]{40}$') {
-            throw 'Unable to resolve the PR merge base.'
-          }
+          $prepared = & (Join-Path $env:INFRA_PATH 'scripts\Prepare-SigningRepository.ps1') `
+            -RepositoryPath $env:TARGET_PATH `
+            -Repository $context.Repository `
+            -BaseRef $context.BaseRef `
+            -HeadRef $context.HeadRef `
+            -ExpectedBaseSha $context.BaseSha `
+            -ExpectedHeadSha $context.HeadSha
 
-          $expectedRemoteUrl = 'https://github.com/' + $context.Repository + '.git'
-          & git -C $env:TARGET_PATH remote set-url origin $expectedRemoteUrl
-          if ($LASTEXITCODE -ne 0) {
-            throw 'Unable to canonicalize the signing checkout origin URL.'
-          }
-
-          $configuredPushUrls = @(& git -C $env:TARGET_PATH config --local --get-all remote.origin.pushurl 2>$null)
-          if ($LASTEXITCODE -eq 0 -and $configuredPushUrls.Count -gt 0) {
-            throw 'Signing checkout must not configure a separate origin pushurl.'
-          }
-
-          Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "merge_base=$mergeBase" -Encoding utf8
-          Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "head_sha=$($context.HeadSha)" -Encoding utf8
-          Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "head_ref=$($context.HeadRef)" -Encoding utf8
-          Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "expected_remote_url=$expectedRemoteUrl" -Encoding utf8
+          Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "merge_base=$($prepared.MergeBase)" -Encoding utf8
+          Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "head_sha=$($prepared.HeadSha)" -Encoding utf8
+          Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "head_ref=$($prepared.HeadRef)" -Encoding utf8
+          Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "expected_remote_url=$($prepared.ExpectedRemoteUrl)" -Encoding utf8
 
 
       - name: Sign exact feature history with dedicated credential

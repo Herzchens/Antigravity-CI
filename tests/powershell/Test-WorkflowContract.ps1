@@ -9,6 +9,8 @@ $callerPath = Join-Path $repoRoot 'templates\caller-workflow.yml'
 
 $workflow = Get-Content -LiteralPath $workflowPath -Raw -Encoding utf8
 $caller = Get-Content -LiteralPath $callerPath -Raw -Encoding utf8
+$prepareSigningPath = Join-Path $repoRoot 'scripts\Prepare-SigningRepository.ps1'
+$prepareSigningScript = Get-Content -LiteralPath $prepareSigningPath -Raw -Encoding utf8
 
 function Assert-Contains {
     param(
@@ -124,11 +126,11 @@ $publisherJobText = Get-JobText -Start '  publisher:'
 
 $signInfra = $signJobText.IndexOf('- name: Checkout trusted Antigravity-CI implementation', [StringComparison]::Ordinal)
 $signSecurity = $signJobText.IndexOf('- name: Verify signing runner security boundary', [StringComparison]::Ordinal)
-$signTarget = $signJobText.IndexOf('- name: Checkout exact PR head for signing', [StringComparison]::Ordinal)
+$signTarget = $signJobText.IndexOf('- name: Prepare bare signing target', [StringComparison]::Ordinal)
 if ($signInfra -lt 0 -or $signSecurity -le $signInfra -or $signTarget -le $signSecurity) {
-    throw 'Signing runner must verify trusted infrastructure and host policy before checking out PR code.'
+    throw 'Signing runner must verify trusted infrastructure and host policy before fetching PR Git objects.'
 }
-Write-Host '[PASS] signing runner preflight precedes untrusted PR checkout'
+Write-Host '[PASS] signing runner preflight precedes PR object fetch'
 
 $reviewInfra = $reviewJobText.IndexOf('- name: Checkout trusted Antigravity-CI implementation', [StringComparison]::Ordinal)
 $reviewSecurity = $reviewJobText.IndexOf('- name: Verify isolated review runner security boundary', [StringComparison]::Ordinal)
@@ -145,8 +147,8 @@ Assert-Contains -Text $reviewJobText -Needle 'scripts\Test-AgySandboxSmoke.ps1' 
 Assert-Contains -Text $reviewJobText -Needle '-ExpectedAgySha256 $env:AGY_SHA256' -Name 'sandbox smoke is bound to the pinned AGY executable hash'
 
 $checkoutMatches = [regex]::Matches($workflow, 'actions/checkout@([0-9a-f]{40})')
-if ($checkoutMatches.Count -ne 5) {
-    throw "Expected five immutable checkout uses, found $($checkoutMatches.Count)."
+if ($checkoutMatches.Count -ne 4) {
+    throw "Expected four immutable checkout uses, found $($checkoutMatches.Count)."
 }
 Write-Host '[PASS] all checkout actions are full-SHA pinned'
 
@@ -156,11 +158,11 @@ if ($safeDirectoryMatches.Count -ne $checkoutMatches.Count) {
 }
 Write-Host '[PASS] every checkout disables persistent safe.directory mutation'
 
-if ([regex]::Matches($workflow, '(?m)^\s*lfs:\s*false\s*$').Count -lt 2 -or
-    [regex]::Matches($workflow, '(?m)^\s*submodules:\s*false\s*$').Count -lt 2) {
-    throw 'Both untrusted target checkouts must explicitly disable LFS and submodules.'
+if ([regex]::Matches($workflow, '(?m)^\s*lfs:\s*false\s*$').Count -lt 1 -or
+    [regex]::Matches($workflow, '(?m)^\s*submodules:\s*false\s*$').Count -lt 1) {
+    throw 'The untrusted review checkout must explicitly disable LFS and submodules.'
 }
-Write-Host '[PASS] target checkouts explicitly disable LFS and submodules'
+Write-Host '[PASS] untrusted review checkout explicitly disables LFS and submodules'
 
 $usesMatches = [regex]::Matches(
     $workflow,
@@ -185,11 +187,11 @@ Assert-Contains -Text $workflow -Needle ('SIGNING_PUSH_TOKEN: $' + '{{ secrets.s
 Assert-NotContains -Text $workflow -Needle ('token: $' + '{{ secrets.signing_push_token }}') -Name 'signing write credential is never persisted by checkout'
 Assert-Contains -Text $workflow -Needle 'http.https://github.com/.extraheader' -Name 'signing push authentication is process-scoped'
 Assert-Contains -Text $workflow -Needle '$env:SIGNING_PUSH_TOKEN = $null' -Name 'signing token variable is cleared after use'
-Assert-Contains -Text $signJobText -Needle '$expectedRemoteUrl = ''https://github.com/'' + $context.Repository + ''.git''' -Name 'signing canonicalizes origin to the trusted GitHub repository'
-Assert-Contains -Text $signJobText -Needle 'remote.origin.pushurl' -Name 'signing rejects a separate push endpoint'
+Assert-Contains -Text $prepareSigningScript -Needle '$expectedRemoteUrl = ''https://github.com/'' + $Repository + ''.git''' -Name 'signing object fetch canonicalizes origin to the trusted GitHub repository'
+Assert-Contains -Text $prepareSigningScript -Needle 'remote.origin.pushurl' -Name 'signing object fetch rejects a separate push endpoint'
 Assert-Contains -Text $signJobText -Needle '-ExpectedRemoteUrl $env:EXPECTED_REMOTE_URL' -Name 'signing gate binds fetch and push to the validated canonical endpoint'
 
-$prepareSigningPosition = $signJobText.IndexOf('- name: Prepare exact signing target', [StringComparison]::Ordinal)
+$prepareSigningPosition = $signJobText.IndexOf('- name: Prepare bare signing target', [StringComparison]::Ordinal)
 $credentialSigningPosition = $signJobText.IndexOf('- name: Sign exact feature history with dedicated credential', [StringComparison]::Ordinal)
 if ($prepareSigningPosition -lt 0 -or
     $credentialSigningPosition -le $prepareSigningPosition) {
@@ -203,15 +205,14 @@ $prepareSigningText = $signJobText.Substring(
 Assert-NotContains -Text $prepareSigningText -Needle 'signing_push_token' -Name 'signing-target preparation has no branch-update secret'
 Assert-NotContains -Text $prepareSigningText -Needle 'SIGNING_PUSH_TOKEN' -Name 'signing-target preparation has no secret environment alias'
 
-$remoteCanonicalizationPosition = $signJobText.IndexOf('$expectedRemoteUrl =', [StringComparison]::Ordinal)
 $secretMaterializationPosition = $signJobText.IndexOf('SIGNING_PUSH_TOKEN:', [StringComparison]::Ordinal)
 $credentialEncodingPosition = $signJobText.IndexOf('$encodedCredential =', [StringComparison]::Ordinal)
-if ($remoteCanonicalizationPosition -lt 0 -or
+if ($prepareSigningPosition -lt 0 -or
     $secretMaterializationPosition -lt 0 -or
     $credentialEncodingPosition -lt 0 -or
-    $remoteCanonicalizationPosition -ge $secretMaterializationPosition -or
+    $prepareSigningPosition -ge $secretMaterializationPosition -or
     $secretMaterializationPosition -ge $credentialEncodingPosition) {
-    throw 'Signing endpoint validation must complete before the write credential is materialized and encoded.'
+    throw 'Bare signing target validation must complete before the write credential is materialized and encoded.'
 }
 Write-Host '[PASS] signing endpoint is bound before write credential materialization'
 
