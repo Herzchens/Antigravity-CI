@@ -1,0 +1,268 @@
+#requires -Version 7.4
+
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
+
+$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
+$runner = Join-Path $repoRoot 'scripts\Invoke-AgyReview.ps1'
+$schema = Join-Path $repoRoot 'schemas\agy-report.schema.json'
+
+function Invoke-Checked {
+    param(
+        [Parameter(Mandatory)]
+        [string] $FilePath,
+
+        [Parameter(Mandatory)]
+        [AllowEmptyString()]
+        [string[]] $Arguments,
+
+        [string] $WorkingDirectory
+    )
+
+    if ($WorkingDirectory) {
+        Push-Location -LiteralPath $WorkingDirectory
+    }
+
+    try {
+        $output = @(& $FilePath @Arguments 2>&1)
+        if ($LASTEXITCODE -ne 0) {
+            throw "$FilePath failed with exit code $LASTEXITCODE."
+        }
+
+        $output
+    }
+    finally {
+        if ($WorkingDirectory) {
+            Pop-Location
+        }
+    }
+}
+
+function Assert-Throws {
+    param(
+        [Parameter(Mandatory)]
+        [scriptblock] $Action,
+
+        [Parameter(Mandatory)]
+        [string] $Name
+    )
+
+    $threw = $false
+    try {
+        & $Action | Out-Null
+    }
+    catch {
+        $threw = $true
+    }
+
+    if (-not $threw) {
+        throw "Expected failure: $Name"
+    }
+
+    Write-Host "[PASS] $Name"
+}
+
+$tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) (
+    'antigravity-ci-agy-preflight-' + [Guid]::NewGuid().ToString('N')
+)
+$targetRepo = Join-Path $tempRoot 'target'
+$outside = Join-Path $tempRoot 'outside'
+
+New-Item -ItemType Directory -Path $targetRepo -Force | Out-Null
+New-Item -ItemType Directory -Path $outside -Force | Out-Null
+
+try {
+    Invoke-Checked -FilePath 'git' -Arguments @('init', '--quiet') -WorkingDirectory $targetRepo
+    Invoke-Checked -FilePath 'git' -Arguments @('config', 'user.name', 'AGY Fixture') -WorkingDirectory $targetRepo
+    Invoke-Checked -FilePath 'git' -Arguments @('config', 'user.email', 'fixture@example.invalid') -WorkingDirectory $targetRepo
+    Invoke-Checked -FilePath 'git' -Arguments @('config', 'commit.gpgsign', 'false') -WorkingDirectory $targetRepo
+
+    Set-Content -LiteralPath (Join-Path $targetRepo 'tracked.txt') -Value 'base' -Encoding utf8NoBOM
+    Invoke-Checked -FilePath 'git' -Arguments @('add', 'tracked.txt') -WorkingDirectory $targetRepo
+    Invoke-Checked -FilePath 'git' -Arguments @('commit', '--quiet', '-m', 'base') -WorkingDirectory $targetRepo
+
+    $head = (
+        Invoke-Checked -FilePath 'git' -Arguments @('rev-parse', 'HEAD') -WorkingDirectory $targetRepo |
+        Select-Object -First 1
+    ).Trim()
+
+    $prompt = Join-Path $outside 'prompt.txt'
+    Set-Content -LiteralPath $prompt -Value 'review exactly this commit' -Encoding utf8NoBOM
+    $output = Join-Path $outside 'report.json'
+
+    $baseParameters = @{
+        RepositoryPath = $targetRepo
+        PromptPath = $prompt
+        ReportSchemaPath = $schema
+        OutputPath = $output
+        ExpectedRepository = 'Herzchens/Example'
+        ExpectedPr = 42
+        ExpectedHeadSha = $head
+        ExpectedRunId = 'preflight'
+        AgyExecutable = 'definitely-not-needed-for-preflight'
+    }
+
+    $insidePrompt = Join-Path $targetRepo 'prompt.txt'
+    Set-Content -LiteralPath $insidePrompt -Value 'untrusted prompt' -Encoding utf8NoBOM
+    $insidePromptParameters = $baseParameters.Clone()
+    $insidePromptParameters.PromptPath = $insidePrompt
+
+    Assert-Throws -Name 'prompt inside target repository is rejected' -Action {
+        & $runner @insidePromptParameters
+    }
+
+    Remove-Item -LiteralPath $insidePrompt -Force
+
+    $insideSchema = Join-Path $targetRepo 'schema.json'
+    Copy-Item -LiteralPath $schema -Destination $insideSchema
+    $insideSchemaParameters = $baseParameters.Clone()
+    $insideSchemaParameters.ReportSchemaPath = $insideSchema
+
+    Assert-Throws -Name 'report schema inside target repository is rejected' -Action {
+        & $runner @insideSchemaParameters
+    }
+
+    Remove-Item -LiteralPath $insideSchema -Force
+
+    $insideOutputParameters = $baseParameters.Clone()
+    $insideOutputParameters.OutputPath = Join-Path $targetRepo 'report.json'
+
+    Assert-Throws -Name 'report output inside target repository is rejected' -Action {
+        & $runner @insideOutputParameters
+    }
+
+    Add-Content -LiteralPath (Join-Path $targetRepo 'tracked.txt') -Value 'dirty'
+
+    Assert-Throws -Name 'dirty target repository is rejected before AGY starts' -Action {
+        & $runner @baseParameters
+    }
+
+    Invoke-Checked -FilePath 'git' -Arguments @('reset', '--hard', 'HEAD') -WorkingDirectory $targetRepo | Out-Null
+
+    $wrongHeadParameters = $baseParameters.Clone()
+    $wrongHeadParameters.ExpectedHeadSha = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+
+    Assert-Throws -Name 'wrong exact head is rejected before AGY starts' -Action {
+        & $runner @wrongHeadParameters
+    }
+
+    Write-Host '[PASS] AGY runner preflight keeps prompt/schema/output outside reviewed code'
+
+    if ($IsWindows) {
+        $fakeScript = Join-Path $tempRoot 'fake-agy.ps1'
+        $fakeCommand = Join-Path $tempRoot 'fake-agy.cmd'
+        $leakMarker = Join-Path $tempRoot 'secret-leaked.txt'
+        $mutatingOutput = Join-Path $outside 'mutating-report.json'
+
+        $fakeBody = @'
+$ErrorActionPreference = 'Stop'
+
+foreach ($name in @('AGY_REPORTER_TOKEN', 'GITHUB_TOKEN', 'SSH_AUTH_SOCK')) {
+    if (-not [string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($name))) {
+        Set-Content -LiteralPath '__LEAK_MARKER__' -Value $name -Encoding utf8NoBOM
+    }
+}
+
+$hook = Join-Path (Get-Location) '.git\hooks\pre-commit'
+Set-Content -LiteralPath $hook -Value 'persistence-attempt' -Encoding utf8NoBOM
+
+$report = [ordered]@{
+    schema_version = 1
+    repo = 'Herzchens/Example'
+    pr = 42
+    head_sha = '__HEAD_SHA__'
+    run_id = 'preflight'
+    generated_at = '2026-10-27T07:00:00Z'
+    result = 'passed'
+    summary = 'fake'
+    tests = @()
+    findings = @()
+    limitations = @()
+    tool_failures = @()
+}
+
+[ordered]@{
+    conversation_id = 'fake'
+    status = 'SUCCESS'
+    response = ''
+    structured_output = $report
+    duration_seconds = 0
+    num_turns = 1
+    usage = @{}
+} | ConvertTo-Json -Depth 32 -Compress
+'@
+
+        $fakeBody = $fakeBody.Replace('__LEAK_MARKER__', $leakMarker.Replace("'", "''"))
+        $fakeBody = $fakeBody.Replace('__HEAD_SHA__', $head)
+        Set-Content -LiteralPath $fakeScript -Value $fakeBody -Encoding utf8NoBOM
+
+        @"
+@echo off
+pwsh -NoProfile -File "$fakeScript"
+"@ | Set-Content -LiteralPath $fakeCommand -Encoding ascii
+
+        $mutatingParameters = $baseParameters.Clone()
+        $mutatingParameters.AgyExecutable = $fakeCommand
+        $mutatingParameters.OutputPath = $mutatingOutput
+
+        $env:AGY_REPORTER_TOKEN = 'must-not-leak'
+        $env:GITHUB_TOKEN = 'must-not-leak'
+        $env:SSH_AUTH_SOCK = 'must-not-leak'
+
+        try {
+            Assert-Throws -Name 'Git hook persistence attempt invalidates the AGY run' -Action {
+                & $runner @mutatingParameters
+            }
+        }
+        finally {
+            Remove-Item Env:AGY_REPORTER_TOKEN -ErrorAction SilentlyContinue
+            Remove-Item Env:GITHUB_TOKEN -ErrorAction SilentlyContinue
+            Remove-Item Env:SSH_AUTH_SOCK -ErrorAction SilentlyContinue
+        }
+
+        if (Test-Path -LiteralPath $leakMarker) {
+            throw 'Sensitive environment variables leaked into the AGY child process.'
+        }
+
+        if (Test-Path -LiteralPath $mutatingOutput) {
+            throw 'Mutating AGY run left a publishable final report.'
+        }
+
+        Remove-Item -LiteralPath (Join-Path $targetRepo '.git\hooks\pre-commit') -Force -ErrorAction SilentlyContinue
+
+        Write-Host '[PASS] sensitive runner environment is stripped from AGY'
+        Write-Host '[PASS] Git control-plane mutation prevents final report publication'
+
+        $floodScript = Join-Path $tempRoot 'flood-agy.ps1'
+        $floodCommand = Join-Path $tempRoot 'flood-agy.cmd'
+        $floodOutput = Join-Path $outside 'flood-report.json'
+
+        @'
+[Console]::Out.Write(('x' * 16384))
+Start-Sleep -Seconds 5
+'@ | Set-Content -LiteralPath $floodScript -Encoding utf8NoBOM
+
+        @"
+@echo off
+pwsh -NoProfile -File "$floodScript"
+"@ | Set-Content -LiteralPath $floodCommand -Encoding ascii
+
+        $floodParameters = $baseParameters.Clone()
+        $floodParameters.AgyExecutable = $floodCommand
+        $floodParameters.OutputPath = $floodOutput
+        $floodParameters.MaxStdoutBytes = 4096
+
+        Assert-Throws -Name 'stdout flood is bounded and rejected' -Action {
+            & $runner @floodParameters
+        }
+
+        if (Test-Path -LiteralPath $floodOutput) {
+            throw 'Flooding AGY run left a publishable final report.'
+        }
+    }
+}
+finally {
+    if (Test-Path -LiteralPath $tempRoot) {
+        Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
