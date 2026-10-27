@@ -152,6 +152,25 @@ try {
 
     Invoke-Checked -FilePath 'git' -Arguments @('remote', 'set-url', '--delete', 'origin', ([regex]::Escape($unexpectedRemote))) -WorkingDirectory $workRepo
 
+    $boundedCommitParameters = $gateArguments.Clone()
+    $boundedCommitParameters.MaxCommits = 1
+    $commitLimitRejected = $false
+
+    try {
+        & $gateScript @boundedCommitParameters | Out-Null
+    }
+    catch {
+        if ($_.Exception.Message -notlike '*exceeding the maximum allowed 1*') {
+            throw
+        }
+
+        $commitLimitRejected = $true
+    }
+
+    if (-not $commitLimitRejected) {
+        throw 'Expected signing range above MaxCommits to fail closed before rewrite.'
+    }
+
     $result = & $gateScript @gateArguments
 
     if (-not $result.RewritePerformed) {
@@ -478,6 +497,62 @@ try {
         throw 'Expected non-canonical raw author metadata to fail closed rather than be normalized.'
     }
 
+    $oversizedCommitPath = Join-Path $tempRoot 'oversized.commit'
+    $oversizedCommit = @(
+        "tree $baseTree",
+        "parent $baseSha",
+        'author Size Fixture <size@example.invalid> 1700000000 +0000',
+        'committer Size Fixture <size@example.invalid> 1700000000 +0000',
+        '',
+        ('x' * 2048)
+    ) -join [char] 10
+
+    [System.IO.File]::WriteAllText(
+        $oversizedCommitPath,
+        $oversizedCommit,
+        [System.Text.UTF8Encoding]::new($false)
+    )
+
+    $oversizedCommitSha = (
+        Invoke-Checked -FilePath 'git' -Arguments @(
+            'hash-object',
+            '-t',
+            'commit',
+            '-w',
+            '--literally',
+            $oversizedCommitPath
+        ) -WorkingDirectory $workRepo |
+        Select-Object -First 1
+    ).Trim()
+
+    $oversizedParameters = @{
+        RepositoryPath = $workRepo
+        BaseSha = $baseSha
+        HeadSha = $oversizedCommitSha
+        BranchName = 'oversized-fixture'
+        TrustedPublicKey = "$signingKey.pub"
+        SigningKey = $signingKey
+        MaxCommitObjectBytes = 1024
+    }
+
+    $oversizedRejected = $false
+    try {
+        & $gateScript @oversizedParameters | Out-Null
+    }
+    catch {
+        if ($_.Exception.Message -notlike '*exceeds the maximum allowed size of 1024 bytes*') {
+            throw
+        }
+
+        $oversizedRejected = $true
+    }
+
+    if (-not $oversizedRejected) {
+        throw 'Expected oversized commit object to fail closed before signing rewrite.'
+    }
+
+    Write-Host '[PASS] signer rejects feature history above the configured commit-count limit'
+    Write-Host '[PASS] signer rejects oversized commit objects before loading/rewrite'
     Write-Host '[PASS] preserve mode keeps commit count and commit subjects'
     Write-Host '[PASS] final tree is unchanged'
     Write-Host '[PASS] every rewritten commit verifies with the trusted SSH key'

@@ -8,6 +8,8 @@ Every privileged job first replaces system/global Git configuration with a fresh
 
 The signing runner owns the only private signing key. Keep the private key on the machine and load it through the Windows OpenSSH agent; do not place the private key or its passphrase in GitHub secrets. The workflow receives only the public-key path plus a dedicated branch-update credential. The write credential is scoped to the signing step and is not persisted by checkout.
 
+The signing gate fails fast when the feature history exceeds 250 commits or a commit object exceeds 1 MiB by default. These defaults align with GitHub's PR commit-list display boundary and recommended single-object size, and they prevent a same-repository branch from turning signing into an unbounded privileged-runner workload. Increase them only as an explicit deployment decision.
+
 Run the signing runner service/process with a standard, non-elevated Windows token. Membership in the local Administrators group is acceptable only when UAC leaves the runner process on its standard-user token; the security preflight rejects an actually elevated Administrator token.
 
 ## Antigravity runtime pinning
