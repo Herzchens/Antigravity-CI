@@ -126,6 +126,7 @@ public static class AntigravityCiCredentialSentinel
 '@
 
 Add-Type -TypeDefinition $credentialInterop -Language CSharp -ErrorAction Stop
+$null = Get-Command schtasks.exe -CommandType Application -ErrorAction Stop
 
 $agyCommand = Get-Command $AgyExecutable -CommandType Application -ErrorAction Stop |
     Select-Object -First 1
@@ -155,6 +156,8 @@ $secretValue = [Guid]::NewGuid().ToString('N') + [Guid]::NewGuid().ToString('N')
 $credentialTarget = 'Antigravity-CI-Sandbox-Smoke-' + $testId
 $credentialValue = [Guid]::NewGuid().ToString('N') + [Guid]::NewGuid().ToString('N')
 $credentialCreated = $false
+$taskName = 'Antigravity-CI-Sandbox-Smoke-' + $testId
+$controlTaskName = 'Antigravity-CI-Sandbox-Control-' + $testId
 
 $process = $null
 $stdoutStream = $null
@@ -181,9 +184,21 @@ try {
         throw 'Credential Manager sentinel was not readable from the host review account before sandbox probing.'
     }
 
+    $taskAction = '"' + (Join-Path $env:SystemRoot 'System32\cmd.exe') + '" /c exit 0'
+    & schtasks.exe /Create /TN $controlTaskName /TR $taskAction /SC ONLOGON /RL LIMITED /F 2>$null | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw 'Host review account cannot create the Task Scheduler control fixture; sandbox scheduler isolation cannot be proven.'
+    }
+
+    & schtasks.exe /Delete /TN $controlTaskName /F 2>$null | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw 'Unable to remove the Task Scheduler control fixture.'
+    }
+
     $escapedSecretPath = $secretPath.Replace("'", "''")
     $escapedWritePath = $outsideWritePath.Replace("'", "''")
     $escapedCredentialTarget = $credentialTarget.Replace("'", "''")
+    $escapedTaskName = $taskName.Replace("'", "''")
 
     $probe = @'
 #requires -Version 7.4
@@ -198,6 +213,8 @@ $result = [ordered]@{
     network_succeeded = $false
     credential_probe_completed = $false
     credential_read_succeeded = $false
+    scheduled_task_probe_completed = $false
+    scheduled_task_create_succeeded = $false
 }
 
 try {
@@ -255,6 +272,17 @@ catch {
 }
 
 try {
+    $taskAction = '"' + (Join-Path $env:SystemRoot 'System32\cmd.exe') + '" /c exit 0'
+    & schtasks.exe /Create /TN '__TASK_NAME__' /TR $taskAction /SC ONLOGON /RL LIMITED /F 2>&1 | Out-Null
+    $result.scheduled_task_exit_code = [int] $LASTEXITCODE
+    $result.scheduled_task_create_succeeded = $LASTEXITCODE -eq 0
+    $result.scheduled_task_probe_completed = $true
+}
+catch {
+    $result.scheduled_task_probe_error = $_.Exception.GetType().FullName
+}
+
+try {
     $response = Invoke-WebRequest -Uri 'https://example.com/' -UseBasicParsing -TimeoutSec 15 -ErrorAction Stop
     $result.network_succeeded = $true
     $result.network_status = [int] $response.StatusCode
@@ -271,6 +299,7 @@ $result |
     $probe = $probe.Replace('__SECRET_PATH__', $escapedSecretPath)
     $probe = $probe.Replace('__WRITE_PATH__', $escapedWritePath)
     $probe = $probe.Replace('__CREDENTIAL_TARGET__', $escapedCredentialTarget)
+    $probe = $probe.Replace('__TASK_NAME__', $escapedTaskName)
 
     [System.IO.File]::WriteAllText(
         $probePath,
@@ -518,6 +547,17 @@ Do not inspect or modify the probe script. Do not run any other command. After t
         throw 'Sandbox allowed a command to read a Generic Credential from the review account Windows Credential Manager.'
     }
 
+    if (-not [bool] $probeResult.scheduled_task_probe_completed) {
+        throw 'Sandbox Task Scheduler probe did not complete; scheduler isolation was not proven.'
+    }
+
+    & schtasks.exe /Query /TN $taskName 2>$null | Out-Null
+    $persistedTaskExists = $LASTEXITCODE -eq 0
+
+    if ([bool] $probeResult.scheduled_task_create_succeeded -or $persistedTaskExists) {
+        throw 'Sandbox allowed a command to register a Windows Scheduled Task outside the per-review process boundary.'
+    }
+
     if ([bool] $probeResult.network_succeeded) {
         throw 'Sandbox allowed outbound network access without an approved domain.'
     }
@@ -529,6 +569,7 @@ Do not inspect or modify the probe script. Do not run any other command. After t
         OutsideReadBlocked = $true
         OutsideWriteBlocked = $true
         CredentialManagerReadBlocked = $true
+        ScheduledTaskRegistrationBlocked = $true
         NetworkBlocked = $true
         SentinelLeakedToOutput = $false
     }
@@ -549,6 +590,14 @@ finally {
     if ($credentialCreated) {
         try {
             [AntigravityCiCredentialSentinel]::Delete($credentialTarget)
+        }
+        catch {
+        }
+    }
+
+    foreach ($cleanupTaskName in @($taskName, $controlTaskName)) {
+        try {
+            & schtasks.exe /Delete /TN $cleanupTaskName /F 2>$null | Out-Null
         }
         catch {
         }
