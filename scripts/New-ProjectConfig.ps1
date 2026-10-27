@@ -105,13 +105,16 @@ $lines.Add('gui = ' + $Gui.ToString().ToLowerInvariant())
 $lines.Add('')
 
 $fullOutputPath = [System.IO.Path]::GetFullPath($OutputPath)
-if ((Test-Path -LiteralPath $fullOutputPath) -and -not $Force) {
-    throw "Project configuration already exists: $fullOutputPath"
+$parent = Split-Path -Parent $fullOutputPath
+
+if ([System.IO.Path]::GetFileName($fullOutputPath) -cne 'project.toml' -or
+    [string]::IsNullOrWhiteSpace($parent) -or
+    (Split-Path -Leaf $parent) -cne '.agy') {
+    throw 'Project configuration output must be the repository .agy/project.toml file.'
 }
 
-$parent = Split-Path -Parent $fullOutputPath
-if ([string]::IsNullOrWhiteSpace($parent)) {
-    throw 'Project configuration output must have a parent directory.'
+if ((Test-Path -LiteralPath $fullOutputPath) -and -not $Force) {
+    throw "Project configuration already exists: $fullOutputPath"
 }
 
 New-Item -ItemType Directory -Path $parent -Force -ErrorAction Stop | Out-Null

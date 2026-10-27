@@ -96,6 +96,30 @@ try {
     & $callerGenerator @callerParameters | Out-Null
     Write-Host '[PASS] caller generator requires explicit Force for overwrite'
 
+    $duplicateLabelParameters = $callerParameters.Clone()
+    $duplicateLabelParameters.ReviewRunnerLabel = 'AGY-SIGNING'
+    Assert-Throws -Name 'caller generator rejects duplicate runner trust-domain labels' -Action {
+        & $callerGenerator @duplicateLabelParameters
+    }
+
+    $badReporterParameters = $callerParameters.Clone()
+    $badReporterParameters.ExpectedReporterLogin = 'bad reporter'
+    Assert-Throws -Name 'caller generator rejects malformed reporter login' -Action {
+        & $callerGenerator @badReporterParameters
+    }
+
+    $wrongCallerPathParameters = $callerParameters.Clone()
+    $wrongCallerPathParameters.OutputPath = Join-Path $tempRoot 'antigravity-ci.yml'
+    Assert-Throws -Name 'caller generator rejects output outside .github/workflows' -Action {
+        & $callerGenerator @wrongCallerPathParameters
+    }
+
+    $nestedWrongCallerPathParameters = $callerParameters.Clone()
+    $nestedWrongCallerPathParameters.OutputPath = Join-Path (Join-Path (Join-Path $tempRoot '.github') 'not-workflows') 'antigravity-ci.yml'
+    Assert-Throws -Name 'caller generator requires exact .github/workflows parent' -Action {
+        & $callerGenerator @nestedWrongCallerPathParameters
+    }
+
     $configPath = Join-Path (Join-Path $tempRoot '.agy') 'project.toml'
     $configParameters = @{
         OutputPath = $configPath
@@ -134,7 +158,7 @@ try {
     Write-Host '[PASS] project config generator round-trips through the strict loader'
 
     $invalidConfigParameters = $configParameters.Clone()
-    $invalidConfigParameters.OutputPath = Join-Path (Join-Path $tempRoot '.agy') 'invalid.toml'
+    $invalidConfigParameters.Force = $true
     $invalidConfigParameters.Build = @{
         'Bad Name' = 'echo no'
     }
@@ -142,6 +166,20 @@ try {
     Assert-Throws -Name 'project config generator rejects invalid command names' -Action {
         & $configGenerator @invalidConfigParameters
     }
+
+    $wrongConfigPathParameters = $configParameters.Clone()
+    $wrongConfigPathParameters.OutputPath = Join-Path $tempRoot 'project.toml'
+    Assert-Throws -Name 'project config generator rejects output outside .agy' -Action {
+        & $configGenerator @wrongConfigPathParameters
+    }
+
+    $wrongConfigNameParameters = $configParameters.Clone()
+    $wrongConfigNameParameters.OutputPath = Join-Path (Join-Path $tempRoot '.agy') 'other.toml'
+    Assert-Throws -Name 'project config generator requires exact project.toml filename' -Action {
+        & $configGenerator @wrongConfigNameParameters
+    }
+
+    Write-Host '[PASS] adoption generators enforce canonical policy-file locations'
 }
 finally {
     if (Test-Path -LiteralPath $tempRoot) {
