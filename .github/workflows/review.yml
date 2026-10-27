@@ -444,6 +444,16 @@ jobs:
 
           Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "runner_identity=$($security.Identity)" -Encoding utf8
 
+      - name: Verify Antigravity sandbox runtime boundary
+        shell: pwsh
+        env:
+          INFRA_PATH: ${{ github.workspace }}\infrastructure
+          AGY_EXECUTABLE: ${{ inputs.agy_executable }}
+          AGY_SHA256: ${{ inputs.agy_sha256 }}
+        run: |
+          & (Join-Path $env:INFRA_PATH 'scripts\Test-AgySandboxSmoke.ps1') `
+            -AgyExecutable $env:AGY_EXECUTABLE `
+            -ExpectedAgySha256 $env:AGY_SHA256 | Out-Null
 
       - name: Checkout exact signed PR head without credentials
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1

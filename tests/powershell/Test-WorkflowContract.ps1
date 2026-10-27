@@ -132,11 +132,17 @@ Write-Host '[PASS] signing runner preflight precedes untrusted PR checkout'
 
 $reviewInfra = $reviewJobText.IndexOf('- name: Checkout trusted Antigravity-CI implementation', [StringComparison]::Ordinal)
 $reviewSecurity = $reviewJobText.IndexOf('- name: Verify isolated review runner security boundary', [StringComparison]::Ordinal)
+$reviewSandbox = $reviewJobText.IndexOf('- name: Verify Antigravity sandbox runtime boundary', [StringComparison]::Ordinal)
 $reviewTarget = $reviewJobText.IndexOf('- name: Checkout exact signed PR head without credentials', [StringComparison]::Ordinal)
-if ($reviewInfra -lt 0 -or $reviewSecurity -le $reviewInfra -or $reviewTarget -le $reviewSecurity) {
-    throw 'Review runner must verify trusted infrastructure and host policy before checking out PR code.'
+if ($reviewInfra -lt 0 -or
+    $reviewSecurity -le $reviewInfra -or
+    $reviewSandbox -le $reviewSecurity -or
+    $reviewTarget -le $reviewSandbox) {
+    throw 'Review runner must verify trusted infrastructure, host policy, and live sandbox containment before checking out PR code.'
 }
-Write-Host '[PASS] review runner preflight precedes untrusted PR checkout'
+Write-Host '[PASS] review runner host and sandbox preflight precede untrusted PR checkout'
+Assert-Contains -Text $reviewJobText -Needle 'scripts\Test-AgySandboxSmoke.ps1' -Name 'review job requires the live sandbox smoke test'
+Assert-Contains -Text $reviewJobText -Needle '-ExpectedAgySha256 $env:AGY_SHA256' -Name 'sandbox smoke is bound to the pinned AGY executable hash'
 
 $checkoutMatches = [regex]::Matches($workflow, 'actions/checkout@([0-9a-f]{40})')
 if ($checkoutMatches.Count -ne 5) {
@@ -256,8 +262,8 @@ $agyHashBindings = [regex]::Matches(
     $workflow,
     '-ExpectedAgySha256 \$env:AGY_SHA256'
 ).Count
-if ($agyHashBindings -ne 2) {
-    throw "Expected AGY SHA-256 pin at review preflight and execution; found $agyHashBindings."
+if ($agyHashBindings -ne 3) {
+    throw "Expected AGY SHA-256 pin at review preflight, sandbox attestation, and execution; found $agyHashBindings."
 }
 Write-Host '[PASS] AGY binary hash is enforced before preflight execution and review execution'
 
