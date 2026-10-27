@@ -445,6 +445,17 @@ if ($agyHashBeforeHelp -cne $expectedAgyHash) {
     throw "Antigravity CLI SHA-256 '$agyHashBeforeHelp' does not match the expected pinned hash."
 }
 
+$remoteControlPolicy = Join-Path $PSScriptRoot 'Assert-AgyRemoteControlPolicy.ps1'
+if (-not (Test-Path -LiteralPath $remoteControlPolicy -PathType Leaf)) {
+    throw 'Assert-AgyRemoteControlPolicy.ps1 is required next to Assert-RunnerSecurity.ps1.'
+}
+
+$remoteControlParameters = @{
+    AgyExecutable = $agyPath
+    HomeDirectory = $resolvedHomeDirectory
+}
+$remoteControlResult = & $remoteControlPolicy @remoteControlParameters
+
 $previousAutoUpdate = [Environment]::GetEnvironmentVariable('AGY_CLI_DISABLE_AUTO_UPDATE')
 try {
     $env:AGY_CLI_DISABLE_AUTO_UPDATE = 'true'
@@ -496,6 +507,7 @@ foreach ($requiredFlag in @(
     SshAgentIdentityCount = $agentKeys.Count
     AgySettingsSha256 = $hostPolicyResult.SettingsSha256
     ProtectedReadProbeCount = $filesystemBoundaryResult.ProbeCount
+    RemoteControlPolicyValid = [bool] $remoteControlResult.Valid
     Valid = $true
     SandboxRuntimeStillRequiresSmokeTest = $true
 }

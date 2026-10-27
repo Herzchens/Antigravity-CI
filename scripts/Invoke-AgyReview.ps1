@@ -359,14 +359,24 @@ if ($initialAgyHash -cne $expectedAgyHash) {
 $reportResolver = Join-Path $PSScriptRoot 'Resolve-AgyReport.ps1'
 $processJobHelper = Join-Path $PSScriptRoot 'WindowsProcessJob.ps1'
 $hostPolicy = Join-Path $PSScriptRoot 'Assert-AgyHostPolicy.ps1'
+$remoteControlPolicy = Join-Path $PSScriptRoot 'Assert-AgyRemoteControlPolicy.ps1'
 
-foreach ($requiredScript in @($reportResolver, $processJobHelper, $hostPolicy)) {
+foreach ($requiredScript in @($reportResolver, $processJobHelper, $hostPolicy, $remoteControlPolicy)) {
     if (-not (Test-Path -LiteralPath $requiredScript -PathType Leaf)) {
         throw "Required AGY review helper is missing: $requiredScript"
     }
 }
 
 $initialHostPolicy = & $hostPolicy -HomeDirectory $HomeDirectory
+
+if ($IsWindows) {
+    $initialRemoteControlParameters = @{
+        AgyExecutable = $agyPath
+        HomeDirectory = $HomeDirectory
+    }
+    $null = & $remoteControlPolicy @initialRemoteControlParameters
+}
+
 . $processJobHelper
 
 $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) (
@@ -633,6 +643,14 @@ try {
     $finalHostPolicy = & $hostPolicy -HomeDirectory $HomeDirectory
     if ($finalHostPolicy.SettingsSha256 -cne $initialHostPolicy.SettingsSha256) {
         throw 'Antigravity review-account settings changed during the review run.'
+    }
+
+    if ($IsWindows) {
+        $finalRemoteControlParameters = @{
+            AgyExecutable = $agyPath
+            HomeDirectory = $HomeDirectory
+        }
+        $null = & $remoteControlPolicy @finalRemoteControlParameters
     }
 
     $finalAgyHash = (

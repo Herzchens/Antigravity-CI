@@ -31,6 +31,8 @@ The review and publisher runner processes must also remain non-elevated. Do not 
 
 The review runner uses the Antigravity account session cached in its dedicated Windows profile. Do not configure Gemini API-key or Google Cloud ADC authentication on that account, and do not set `GEMINI_API_KEY`, `AGY_ADC_AUTH`, `GOOGLE_GEMINI_BASE_URL`, `GOOGLE_APPLICATION_CREDENTIALS`, or `CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE`. Runner preflight rejects those authentication/provider overrides and the AGY child-process sanitizer removes them defensively.
 
+Remote Control is forbidden on the review account. The CLI headless Remote Control feature can register a persistent Windows Scheduled Task and uses the same CLI credentials as normal Antigravity sessions, creating a control path outside the per-review process boundary. Runner preflight therefore rejects persisted Remote Control configuration, Antigravity/agy Scheduled Task markers, and concurrent Antigravity processes. The review wrapper repeats this check before and after AGY so an attempted daemon registration invalidates the run before a report becomes publishable. Do not use `agy --remote-control`, `/remote-control`, or `agy remote-control start` on the dedicated review account.
+
 ## Publisher runner
 
 The publisher runner must use a third OS identity and must not check out reviewed PR code. Prefer a dedicated GitHub App installation token. The App should be installed only on intended repositories and have the minimum repository permission needed to create and manage the timeline comment: either Issues write or Pull requests write. Metadata read is implicit for installed Apps. The workflow also verifies the actual account that created the comment.
