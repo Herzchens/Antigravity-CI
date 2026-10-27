@@ -39,7 +39,7 @@ The fallback reporter token exists for initial deployments only. Do not reuse th
 
 The default-branch caller workflow and `.agy/project.toml` are privileged policy files. There are two supported deployment modes:
 
-- **Collaborative mode:** protect the default branch, require pull requests, require at least one approving review, require Code Owner review for the privileged policy files, dismiss stale approvals after new pushes, disallow force pushes/deletions, and apply the rules to administrators where the GitHub plan permits it. Generate exact final CODEOWNERS entries with `scripts/New-PolicyCodeOwners.ps1`; the script appends the caller workflow and `.agy/project.toml` entries last because GitHub gives the last matching CODEOWNERS pattern precedence.
+- **Collaborative mode:** protect the default branch, require pull requests, require at least one approving review, require Code Owner review for the privileged policy files, dismiss stale approvals after new pushes, disallow force pushes/deletions, and apply the rules to administrators where the GitHub plan permits it. Generate exact final CODEOWNERS entries with `scripts/New-PolicyCodeOwners.ps1`; the script requires `.github/CODEOWNERS` and appends root-anchored entries for the CODEOWNERS file itself, the caller workflow, and `.agy/project.toml` last because GitHub gives the last matching CODEOWNERS pattern precedence.
 - **Single-writer pilot:** only the repository owner may have write/maintain/admin authority. Treat granting another principal write-capable access as a security-boundary change that requires moving to collaborative mode before privileged review continues.
 
 GitHub currently provides protected branches, rulesets, and CODEOWNERS for private repositories only on GitHub Pro, Team, Enterprise Cloud, or Enterprise Server. A private GitHub Free repository therefore cannot claim collaborative-mode protection; keep it single-writer or change plan/visibility before adding write-capable collaborators.
@@ -56,7 +56,7 @@ Generate an initial caller with `scripts/New-AntigravityCaller.ps1` and provide 
 
 The real sandbox acceptance probe is intentionally setup-time/manual. Run `scripts/Test-AgySandboxSmoke.ps1 -ExpectedAgySha256 <pinned-hash>` under the dedicated review account after installing or upgrading AGY and after materially changing Windows sandbox policy.
 
-For repositories that support collaborative mode, run `scripts/New-PolicyCodeOwners.ps1 -OutputPath .github/CODEOWNERS -CodeOwner @owner-or-org/team` after generating the caller. If an existing exact policy entry names a different owner, the generator fails unless `-Force` is supplied; review that replacement deliberately.
+For repositories that support collaborative mode, run `scripts/New-PolicyCodeOwners.ps1 -OutputPath .github/CODEOWNERS -CodeOwner @owner-or-org/team` after generating the caller. The generator rejects whitespace and CODEOWNERS pattern metacharacters in a custom caller path, migrates legacy unanchored exact entries to root-anchored rules, and protects `.github/CODEOWNERS` itself. If an existing exact policy entry names a different owner, the generator fails unless `-Force` is supplied; review that replacement deliberately.
 
 The reusable workflow rejects forks, draft pull requests, non-default target branches, repository-ID mismatches, and unapproved pull-request actions before allocating the signing runner. The same checks are repeated inside trusted PowerShell code.
 
