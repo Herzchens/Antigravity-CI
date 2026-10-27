@@ -108,8 +108,8 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
-          persist-credentials: true
-          token: ${{ secrets.signing_push_token }}
+          persist-credentials: false
+          token: ${{ github.token }}
           path: target
 
       - name: Checkout trusted Antigravity-CI implementation
@@ -145,6 +145,7 @@ jobs:
           TARGET_PATH: ${{ github.workspace }}\target
           INFRA_PATH: ${{ github.workspace }}\infrastructure
           TRUSTED_PUBLIC_KEY_PATH: ${{ inputs.signing_public_key_path }}
+          SIGNING_PUSH_TOKEN: ${{ secrets.signing_push_token }}
         run: |
           $ErrorActionPreference = 'Stop'
 
@@ -159,14 +160,53 @@ jobs:
             throw 'Unable to resolve the PR merge base.'
           }
 
-          $result = & (Join-Path $env:INFRA_PATH 'scripts\Invoke-SigningGate.ps1') `
-            -RepositoryPath $env:TARGET_PATH `
-            -BaseSha $mergeBase `
-            -HeadSha $context.HeadSha `
-            -BranchName $context.HeadRef `
-            -TrustedPublicKey $env:TRUSTED_PUBLIC_KEY_PATH `
-            -ExpectedRemoteHead $context.HeadSha `
-            -Push
+          if ([string]::IsNullOrWhiteSpace($env:SIGNING_PUSH_TOKEN)) {
+            throw 'Dedicated signing push token is missing.'
+          }
+
+          $encodedCredential = [Convert]::ToBase64String(
+            [System.Text.Encoding]::UTF8.GetBytes('x-access-token:' + $env:SIGNING_PUSH_TOKEN)
+          )
+          Write-Host "::add-mask::$encodedCredential"
+
+          $configEnvironmentNames = @(
+            'GIT_CONFIG_COUNT',
+            'GIT_CONFIG_KEY_0',
+            'GIT_CONFIG_VALUE_0'
+          )
+          $savedConfigEnvironment = @{}
+
+          foreach ($name in $configEnvironmentNames) {
+            $savedConfigEnvironment[$name] = [Environment]::GetEnvironmentVariable($name)
+          }
+
+          try {
+            $env:GIT_CONFIG_COUNT = '1'
+            $env:GIT_CONFIG_KEY_0 = 'http.https://github.com/.extraheader'
+            $env:GIT_CONFIG_VALUE_0 = 'AUTHORIZATION: basic ' + $encodedCredential
+
+            $result = & (Join-Path $env:INFRA_PATH 'scripts\Invoke-SigningGate.ps1') `
+              -RepositoryPath $env:TARGET_PATH `
+              -BaseSha $mergeBase `
+              -HeadSha $context.HeadSha `
+              -BranchName $context.HeadRef `
+              -TrustedPublicKey $env:TRUSTED_PUBLIC_KEY_PATH `
+              -ExpectedRemoteHead $context.HeadSha `
+              -Push
+          }
+          finally {
+            foreach ($name in $configEnvironmentNames) {
+              if ($null -eq $savedConfigEnvironment[$name]) {
+                Remove-Item -LiteralPath "Env:$name" -ErrorAction SilentlyContinue
+              }
+              else {
+                Set-Item -LiteralPath "Env:$name" -Value $savedConfigEnvironment[$name]
+              }
+            }
+
+            $encodedCredential = $null
+            $env:SIGNING_PUSH_TOKEN = $null
+          }
 
           $rewritten = $result.RewritePerformed.ToString().ToLowerInvariant()
           Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "rewritten=$rewritten" -Encoding utf8
