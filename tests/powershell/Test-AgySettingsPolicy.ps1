@@ -59,6 +59,25 @@ try {
     Write-Host '[PASS] minimal review settings policy is accepted'
     Write-Host '[PASS] restrictive permissions.deny rules remain allowed'
 
+    $duplicatePath = Join-Path $tempRoot 'duplicate-settings.json'
+    [System.IO.File]::WriteAllText(
+        $duplicatePath,
+        '{"enableTerminalSandbox":true,"toolPermission":"always-proceed","toolPermission":"proceed-in-sandbox","historySize":0,"disableSlashCommands":true}',
+        [System.Text.UTF8Encoding]::new($false)
+    )
+    Assert-Throws -Name 'duplicate settings properties are rejected before object conversion' -Action {
+        & $policy -SettingsPath $duplicatePath
+    }
+
+    $invalidUtf8Path = Join-Path $tempRoot 'invalid-utf8-settings.json'
+    [System.IO.File]::WriteAllBytes(
+        $invalidUtf8Path,
+        [byte[]] @(0x7B,0x22,0x78,0x22,0x3A,0xFF,0x7D)
+    )
+    Assert-Throws -Name 'invalid UTF-8 settings bytes are rejected' -Action {
+        & $policy -SettingsPath $invalidUtf8Path
+    }
+
     $cases = @(
         @{
             Name = 'always-proceed is rejected'

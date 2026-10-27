@@ -12,6 +12,17 @@ $policy = Get-Content -LiteralPath $policyPath -Raw -Encoding utf8
 $runner = Get-Content -LiteralPath $runnerPath -Raw -Encoding utf8
 $review = Get-Content -LiteralPath $reviewPath -Raw -Encoding utf8
 
+foreach ($strictRequirement in @(
+    'ConvertFrom-StrictHostJson',
+    'Assert-NoDuplicateJsonProperties',
+    '[System.Text.UTF8Encoding]::new($false, $true)',
+    'ConvertFrom-StrictHostJson -Path'
+)) {
+    if (-not $policy.Contains($strictRequirement, [StringComparison]::Ordinal)) {
+        throw "Remote Control policy contract is missing strict JSON guard '$strictRequirement'."
+    }
+}
+
 foreach ($required in @(
     'Get-ScheduledTask -ErrorAction Stop',
     'Get-CimInstance -ClassName Win32_Process -ErrorAction Stop',
