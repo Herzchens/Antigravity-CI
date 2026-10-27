@@ -146,24 +146,51 @@ if ($LASTEXITCODE -ne 0 -or $headResolved -ne $HeadSha) {
     throw 'Unable to resolve the exact review head commit.'
 }
 
-$trackedBytes = Invoke-GitBytes -Arguments @(
+$treeBytes = Invoke-GitBytes -Arguments @(
     'ls-tree',
     '-r',
     '-z',
-    '--name-only',
     $headResolved
 )
-$trackedPaths = ConvertFrom-NullSeparatedUtf8 -Bytes $trackedBytes
+$treeRecords = ConvertFrom-NullSeparatedUtf8 -Bytes $treeBytes
 
-if ($trackedPaths.Count -gt $MaxTrackedPaths) {
+if ($treeRecords.Count -gt $MaxTrackedPaths) {
     throw "Review head contains more than $MaxTrackedPaths tracked paths."
 }
 
+$trackedPaths = [System.Collections.Generic.List[string]]::new()
 $blockedCount = 0
-foreach ($path in $trackedPaths) {
+$unsafeTreeEntryCount = 0
+
+foreach ($record in $treeRecords) {
+    $tabIndex = $record.IndexOf([char] 9)
+    if ($tabIndex -le 0 -or $tabIndex -ge ($record.Length - 1)) {
+        throw 'Git returned a malformed tree entry.'
+    }
+
+    $metadata = $record.Substring(0, $tabIndex)
+    $path = $record.Substring($tabIndex + 1)
+    $metadataParts = @($metadata -split ' ')
+
+    if ($metadataParts.Count -ne 3 -or
+        $metadataParts[0] -notmatch '^[0-9]{6}$' -or
+        $metadataParts[2] -notmatch '^[0-9a-f]+$') {
+        throw 'Git returned a malformed tree entry.'
+    }
+
+    $mode = $metadataParts[0]
+    if ($mode -cnotin @('100644', '100755')) {
+        $unsafeTreeEntryCount++
+    }
+
+    $trackedPaths.Add($path)
     if (Test-BlockedCustomizationPath -Path $path) {
         $blockedCount++
     }
+}
+
+if ($unsafeTreeEntryCount -gt 0) {
+    throw "Review head contains $unsafeTreeEntryCount unsafe Git tree entry mode(s); symlinks, gitlinks, and non-file entries are not permitted."
 }
 
 if ($blockedCount -gt 0) {
@@ -195,6 +222,7 @@ if ($contextChangeCount -gt 0) {
     BaseSha = $baseResolved
     HeadSha = $headResolved
     TrackedPathCount = $trackedPaths.Count
+    UnsafeTreeEntryCount = 0
     BlockedWorkspaceCustomizationCount = 0
     ChangedContextPolicyCount = 0
     Valid = $true

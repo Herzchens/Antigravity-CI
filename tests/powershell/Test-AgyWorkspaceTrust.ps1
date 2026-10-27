@@ -142,6 +142,54 @@ try {
     Assert-Throws -Name 'legacy workspace .agent rules are rejected' -Action {
         & $policy -RepositoryPath $repo -BaseSha $base -HeadSha $legacyRuleHead
     }
+
+    Invoke-Checked -FilePath git -Arguments @('reset', '--hard', $safeHead) -WorkingDirectory $repo | Out-Null
+    Remove-Item -LiteralPath (Join-Path $repo '.agent') -Recurse -Force -ErrorAction SilentlyContinue
+
+    $symlinkTargetPath = Join-Path $repo 'symlink-target.txt'
+    [System.IO.File]::WriteAllText(
+        $symlinkTargetPath,
+        '..\outside-secret.txt',
+        [System.Text.UTF8Encoding]::new($false)
+    )
+    $symlinkBlob = (
+        Invoke-Checked -FilePath git -Arguments @('hash-object', '-w', 'symlink-target.txt') -WorkingDirectory $repo |
+        Select-Object -First 1
+    ).Trim()
+    Remove-Item -LiteralPath $symlinkTargetPath -Force
+    Invoke-Checked -FilePath git -Arguments @(
+        'update-index',
+        '--add',
+        '--cacheinfo',
+        "120000,$symlinkBlob,escape-link"
+    ) -WorkingDirectory $repo
+    Invoke-Checked -FilePath git -Arguments @('commit', '--quiet', '-m', 'add symlink entry') -WorkingDirectory $repo
+    $symlinkHead = (
+        Invoke-Checked -FilePath git -Arguments @('rev-parse', 'HEAD') -WorkingDirectory $repo |
+        Select-Object -First 1
+    ).Trim()
+
+    Assert-Throws -Name 'Git symlink tree entry is rejected before AGY review' -Action {
+        & $policy -RepositoryPath $repo -BaseSha $base -HeadSha $symlinkHead
+    }
+
+    Invoke-Checked -FilePath git -Arguments @('reset', '--hard', $safeHead) -WorkingDirectory $repo | Out-Null
+
+    Invoke-Checked -FilePath git -Arguments @(
+        'update-index',
+        '--add',
+        '--cacheinfo',
+        "160000,$base,embedded-repository"
+    ) -WorkingDirectory $repo
+    Invoke-Checked -FilePath git -Arguments @('commit', '--quiet', '-m', 'add gitlink entry') -WorkingDirectory $repo
+    $gitlinkHead = (
+        Invoke-Checked -FilePath git -Arguments @('rev-parse', 'HEAD') -WorkingDirectory $repo |
+        Select-Object -First 1
+    ).Trim()
+
+    Assert-Throws -Name 'Git gitlink/submodule tree entry is rejected before AGY review' -Action {
+        & $policy -RepositoryPath $repo -BaseSha $base -HeadSha $gitlinkHead
+    }
 }
 finally {
     if (Test-Path -LiteralPath $tempRoot) {
