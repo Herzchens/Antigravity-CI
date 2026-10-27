@@ -108,6 +108,8 @@ Assert-Contains -Text $caller -Needle 'github.event.pull_request.head.repo.full_
 Assert-Contains -Text $caller -Needle 'github.event.pull_request.head.repo.id == github.event.pull_request.base.repo.id' -Name 'caller binds repository identity by immutable ID'
 Assert-Contains -Text $caller -Needle 'REPLACE_WITH_INFRASTRUCTURE_REPOSITORY/.github/workflows/review.yml@REPLACE_WITH_PINNED_COMMIT_SHA' -Name 'caller pins the reusable workflow by exact infrastructure commit'
 Assert-NotContains -Text $caller -Needle 'secrets: inherit' -Name 'caller maps secrets explicitly'
+Assert-Contains -Text $caller -Needle '  pull-requests: read' -Name 'caller grants the reusable workflow pull-request read permission'
+Assert-Contains -Text $workflow -Needle '  pull-requests: read' -Name 'reusable workflow declares the pull-request read ceiling required by live-state checks'
 
 Assert-Contains -Text $workflow -Needle "github.event_name == 'pull_request_target'" -Name 'reusable workflow independently requires the trusted-base event'
 Assert-Contains -Text $workflow -Needle 'contains(fromJSON(' -Name 'reusable workflow repeats the action allowlist before runner allocation'
