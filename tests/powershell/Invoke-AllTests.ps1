@@ -21,6 +21,7 @@ $tests = @(
     'Test-WorkflowContract.ps1',
     'Test-RunnerSecurity.ps1',
     'Test-SandboxSmokeContract.ps1',
+    'Test-WindowsProcessJob.ps1',
     'Test-PublishBoundary.ps1'
 )
 

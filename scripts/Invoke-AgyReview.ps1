@@ -289,9 +289,17 @@ $agyPath = [System.IO.Path]::GetFullPath($agyCommand.Source)
 $null = Assert-OutsideRepository -Path $agyPath -Name 'AgyExecutable'
 
 $reportResolver = Join-Path $PSScriptRoot 'Resolve-AgyReport.ps1'
+$processJobHelper = Join-Path $PSScriptRoot 'WindowsProcessJob.ps1'
+
 if (-not (Test-Path -LiteralPath $reportResolver -PathType Leaf)) {
     throw 'Resolve-AgyReport.ps1 is required next to Invoke-AgyReview.ps1.'
 }
+
+if (-not (Test-Path -LiteralPath $processJobHelper -PathType Leaf)) {
+    throw 'WindowsProcessJob.ps1 is required next to Invoke-AgyReview.ps1.'
+}
+
+. $processJobHelper
 
 $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) (
     'antigravity-ci-agy-' + [Guid]::NewGuid().ToString('N')
@@ -305,6 +313,7 @@ $stdoutPath = Join-Path $tempRoot 'agy.stdout'
 $stderrPath = Join-Path $tempRoot 'agy.stderr'
 
 $process = $null
+$processJob = [IntPtr]::Zero
 $stdoutStream = $null
 $stderrStream = $null
 $stdout = ''
@@ -382,9 +391,23 @@ try {
 
         $process = [System.Diagnostics.Process]::new()
         $process.StartInfo = $startInfo
+        $processJob = New-WindowsKillOnCloseJob
 
         if (-not $process.Start()) {
             throw 'Failed to start Antigravity CLI.'
+        }
+
+        try {
+            Add-ProcessToWindowsJob -Job $processJob -Process $process
+        }
+        catch {
+            try {
+                $process.Kill($true)
+            }
+            catch {
+            }
+
+            throw 'Antigravity CLI could not be attached to the Windows kill-on-close process job.'
         }
 
         $stdoutStream = [System.IO.File]::Open(
@@ -581,6 +604,20 @@ finally {
         $stderrStream.Dispose()
     }
 
+    $containmentCloseFailure = $null
+
+    if ($processJob -ne [IntPtr]::Zero) {
+        try {
+            Close-WindowsProcessJob -Job $processJob
+        }
+        catch {
+            $containmentCloseFailure = $_
+        }
+        finally {
+            $processJob = [IntPtr]::Zero
+        }
+    }
+
     if ($null -ne $process) {
         $process.Dispose()
     }
@@ -591,4 +628,8 @@ finally {
 
     $stdout = $null
     $stderr = $null
+
+    if ($null -ne $containmentCloseFailure) {
+        throw $containmentCloseFailure
+    }
 }
