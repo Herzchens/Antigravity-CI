@@ -247,6 +247,8 @@ foreach ($probe in $probes) {
     }
 
     $fullPath = [System.IO.Path]::GetFullPath($pathText)
+    $null = Assert-NoReparsePointInExistingPath -Path $fullPath -Name "Protected-read probe '$name'"
+
     if (-not $seenPaths.Add($fullPath)) {
         throw "Protected-read probe '$name' duplicates another probe path."
     }
