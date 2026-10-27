@@ -86,6 +86,10 @@ $preserved = [System.Collections.Generic.List[string]]::new()
 foreach ($line in $existingLines) {
     $trimmed = $line.Trim()
 
+    if ($trimmed.Equals('# Antigravity-CI privileged policy files. Keep these exact entries last so they override broader patterns.', [StringComparison]::Ordinal)) {
+        continue
+    }
+
     if ([string]::IsNullOrWhiteSpace($trimmed) -or $trimmed.StartsWith('#', [StringComparison]::Ordinal)) {
         $preserved.Add($line)
         continue
@@ -103,14 +107,14 @@ foreach ($line in $existingLines) {
     }
 
     if ($null -ne $canonicalPattern) {
-        $owners = if ($parts.Count -gt 1) {
-            @($parts[1..($parts.Count - 1)] | Where-Object {
+        $owners = @(if ($parts.Count -gt 1) {
+            $parts[1..($parts.Count - 1)] | Where-Object {
                 -not $_.StartsWith('#', [StringComparison]::Ordinal)
-            })
+            }
         }
         else {
             @()
-        }
+        })
 
         $sameOwner = $owners.Count -eq 1 -and $owners[0] -ceq $CodeOwner
         if (-not $sameOwner -and -not $Force) {

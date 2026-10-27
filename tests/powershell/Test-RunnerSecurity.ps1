@@ -104,9 +104,9 @@ Set-Content -LiteralPath $protectedSentinel -Value 'fixture sentinel' -Encoding 
 
 foreach ($aclTarget in @(
     @{ Path = $protectedSentinel; Rights = 'R' },
-    @{ Path = $protectedDirectory; Rights = 'W' },
-    @{ Path = $probeManifest; Rights = 'W' },
-    @{ Path = $policyDirectory; Rights = 'W' }
+    @{ Path = $protectedDirectory; Rights = 'WD,AD,WA,WEA' },
+    @{ Path = $probeManifest; Rights = 'WD,AD,WA,WEA' },
+    @{ Path = $policyDirectory; Rights = 'WD,AD,WA,WEA' }
 )) {
     $denySpec = $fixtureIdentity + ':(' + $aclTarget.Rights + ')'
     & icacls.exe $aclTarget.Path /deny $denySpec | Out-Null

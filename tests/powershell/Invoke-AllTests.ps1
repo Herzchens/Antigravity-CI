@@ -3,7 +3,7 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-$pwsh = (Get-Command pwsh -CommandType Application -ErrorAction Stop).Source
+$pwsh = (Get-Command pwsh -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
 $testsRoot = $PSScriptRoot
 
 $tests = @(

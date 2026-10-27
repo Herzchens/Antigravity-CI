@@ -501,6 +501,7 @@ foreach ($requiredFlag in @(
     WindowsBuild = [Environment]::OSVersion.Version.Build
     User = [Environment]::UserName
     Identity = $runnerIdentity
+    IsElevated = $false
     AgyPath = $agyPath
     AgySha256 = $agyHashAfterHelp
     TrustedKeyFingerprint = $trustedFingerprint

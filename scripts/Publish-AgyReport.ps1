@@ -143,7 +143,7 @@ function Invoke-GitHubRequest {
                     throw "GitHub API request failed with HTTP $status."
                 }
 
-                throw "GitHub API request failed with HTTP $status: $message"
+                throw "GitHub API request failed with HTTP $($status): $message"
             }
 
             $jsonObject = if ([string]::IsNullOrWhiteSpace($responseText)) {

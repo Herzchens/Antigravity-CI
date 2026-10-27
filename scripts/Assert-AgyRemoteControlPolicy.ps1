@@ -272,8 +272,8 @@ foreach ($task in $scheduledTasks) {
     $taskRemoteControlMarker = Test-RemoteControlMarkerText -Value $taskIdentity
 
     foreach ($action in @($task.Actions)) {
-        $execute = [string] $action.Execute
-        $arguments = [string] $action.Arguments
+        $execute = [string] (Get-PropertyValue -Object $action -Name 'Execute')
+        $arguments = [string] (Get-PropertyValue -Object $action -Name 'Arguments')
         $actionText = $execute + ' ' + $arguments
         $actionAgyMarker = Test-AntigravityMarkerText -Value $actionText
         $actionRemoteControlMarker = Test-RemoteControlMarkerText -Value $actionText
@@ -328,7 +328,8 @@ foreach ($process in $processes) {
 
     if ($nameMatchesAgy -or
         $pathMatchesAgy -or
-        (Test-AntigravityMarkerText -Value $commandLine)) {
+        (Test-RemoteControlMarkerText -Value $name) -or
+        (Test-RemoteControlMarkerText -Value $commandLine)) {
         $processMarkerCount++
     }
 }

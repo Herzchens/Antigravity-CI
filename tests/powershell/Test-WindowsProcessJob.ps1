@@ -41,7 +41,7 @@ $job = [IntPtr]::Zero
 $childPid = $null
 
 try {
-    $pwsh = (Get-Command pwsh -CommandType Application -ErrorAction Stop).Source
+    $pwsh = (Get-Command pwsh -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
     $parentBody = @'
 $child = Start-Process -FilePath '__PWSH__' -ArgumentList @(
     '-NoProfile',

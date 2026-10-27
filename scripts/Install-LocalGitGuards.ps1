@@ -83,12 +83,12 @@ if (-not (Test-Path -LiteralPath $guardScript -PathType Leaf)) {
     throw 'scripts/Test-PublishBoundary.ps1 is required.'
 }
 
-$defaultHooksOutput = Invoke-Git -Arguments @('rev-parse', '--git-path', 'hooks')
-$defaultHooksText = [string] ($defaultHooksOutput.Output | Select-Object -First 1)
-if ([string]::IsNullOrWhiteSpace($defaultHooksText)) {
-    throw 'Unable to locate the repository Git hooks directory.'
+$gitDirOutput = Invoke-Git -Arguments @('rev-parse', '--git-dir')
+$gitDirText = [string] ($gitDirOutput.Output | Select-Object -First 1)
+if ([string]::IsNullOrWhiteSpace($gitDirText)) {
+    throw 'Unable to locate the repository Git directory.'
 }
-$hooksPath = Resolve-GitPath -Path $defaultHooksText.Trim()
+$hooksPath = Resolve-GitPath -Path (Join-Path $gitDirText.Trim() 'hooks')
 
 $localHooksConfig = Invoke-Git -Arguments @(
     'config',
