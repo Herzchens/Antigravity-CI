@@ -1,0 +1,54 @@
+#requires -Version 7.4
+
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
+
+$pwsh = (Get-Command pwsh -CommandType Application -ErrorAction Stop).Source
+$testsRoot = $PSScriptRoot
+
+$tests = @(
+    'Test-Contracts.ps1',
+    'Test-ProjectConfig.ps1',
+    'Test-SignatureVerification.ps1',
+    'Test-SigningGate.ps1',
+    'Test-AgyPrompt.ps1',
+    'Test-AgyReport.ps1',
+    'Test-PullRequestContext.ps1',
+    'Test-AgyReportComment.ps1',
+    'Test-AgyReviewPreflight.ps1',
+    'Test-PrepareAgyReview.ps1',
+    'Test-ProjectCapabilities.ps1',
+    'Test-WorkflowContract.ps1',
+    'Test-PublishBoundary.ps1'
+)
+
+$failed = [System.Collections.Generic.List[string]]::new()
+
+foreach ($name in $tests) {
+    $path = Join-Path $testsRoot $name
+
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+        $failed.Add("$name (missing)")
+        Write-Host "[FAIL] $name (missing)" -ForegroundColor Red
+        continue
+    }
+
+    Write-Host ""
+    Write-Host "=== $name ===" -ForegroundColor Cyan
+
+    & $pwsh -NoProfile -File $path
+    if ($LASTEXITCODE -ne 0) {
+        $failed.Add($name)
+        Write-Host "[FAIL] $name" -ForegroundColor Red
+    }
+    else {
+        Write-Host "[PASS] $name" -ForegroundColor Green
+    }
+}
+
+if ($failed.Count -gt 0) {
+    throw "PowerShell test suite failed: $($failed -join ', ')"
+}
+
+Write-Host ""
+Write-Host "[PASS] all $($tests.Count) PowerShell test files passed" -ForegroundColor Green
