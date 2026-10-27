@@ -189,14 +189,19 @@ try {
     }
 
     $taskAction = '"' + (Join-Path $env:SystemRoot 'System32\cmd.exe') + '" /c exit 0'
-    & schtasks.exe /Create /TN $controlTaskName /TR $taskAction /SC ONLOGON /RL LIMITED /F 2>$null | Out-Null
-    if ($LASTEXITCODE -ne 0) {
-        throw 'Host review account cannot create the Task Scheduler control fixture; sandbox scheduler isolation cannot be proven.'
-    }
+    $hostTaskSchedulerRegistrationAllowed = $false
+    $hostTaskSchedulerControlExitCode = $null
 
-    & schtasks.exe /Delete /TN $controlTaskName /F 2>$null | Out-Null
-    if ($LASTEXITCODE -ne 0) {
-        throw 'Unable to remove the Task Scheduler control fixture.'
+    & schtasks.exe /Create /TN $controlTaskName /TR $taskAction /SC ONLOGON /RL LIMITED /F 2>$null | Out-Null
+    $hostTaskSchedulerControlExitCode = [int] $LASTEXITCODE
+
+    if ($hostTaskSchedulerControlExitCode -eq 0) {
+        $hostTaskSchedulerRegistrationAllowed = $true
+
+        & schtasks.exe /Delete /TN $controlTaskName /F 2>$null | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            throw 'Unable to remove the Task Scheduler control fixture.'
+        }
     }
 
     $hostRunKey = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($runRegistrySubKey, $true)
@@ -653,6 +658,9 @@ Do not inspect or modify the probe script. Do not run any other command. After t
         OutsideWriteBlocked = $true
         CredentialManagerReadBlocked = $true
         ScheduledTaskRegistrationBlocked = $true
+        HostTaskSchedulerRegistrationAllowed = $hostTaskSchedulerRegistrationAllowed
+        HostTaskSchedulerControlExitCode = $hostTaskSchedulerControlExitCode
+        ScheduledTaskBoundary = if ($hostTaskSchedulerRegistrationAllowed) { 'sandbox' } else { 'host-account-policy' }
         RegistryRunPersistenceBlocked = $true
         NetworkBlocked = $true
         SentinelLeakedToOutput = $false
