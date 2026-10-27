@@ -62,6 +62,18 @@ try {
         throw 'Generated caller workflow is not pinned to the requested infrastructure commit.'
     }
 
+    if (-not $callerText.Contains('  pull_request_target:', [StringComparison]::Ordinal)) {
+        throw 'Generated caller workflow must dispatch from trusted base workflow code.'
+    }
+
+    if ($callerText.Contains('  pull_request:', [StringComparison]::Ordinal)) {
+        throw 'Generated caller workflow must not use PR-controlled pull_request workflow code.'
+    }
+
+    if (-not $callerText.Contains('  pull-requests: read', [StringComparison]::Ordinal)) {
+        throw 'Generated caller workflow must grant the reusable workflow pull-request read access.'
+    }
+
     if ($callerText -notmatch "Owner''s Key") {
         throw 'Single quote in YAML path was not escaped safely.'
     }

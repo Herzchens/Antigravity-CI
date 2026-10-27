@@ -24,6 +24,10 @@ Use an exact 40-character Antigravity-CI commit SHA in every caller workflow. Do
 
 Generate an initial caller with `scripts/New-AntigravityCaller.ps1` and an initial project config with `scripts/New-ProjectConfig.ps1`. Review the generated files before committing them to a target repository.
 
+The target repository dispatcher uses `pull_request_target` intentionally so the caller YAML, pinned infrastructure SHA, runner labels, and secret mappings come from the trusted base branch rather than the pull request merge ref. The dispatcher must never check out or execute pull-request code itself. It grants only `contents: read` and `pull-requests: read`; all reviewed code checkout happens inside the pinned reusable workflow after same-repository, draft, base-branch, and repository-ID gates.
+
+Do not replace this dispatcher with `pull_request`. That would let a same-repository pull request modify the caller workflow before self-hosted runner allocation and could change reusable-workflow inputs or secret mappings. If a GitHub Actions event policy blocks `pull_request_target`, fix the repository or organization policy rather than falling back to an untrusted caller.
+
 The reusable workflow rejects forks, draft pull requests, non-default target branches, repository-ID mismatches, and unapproved pull-request actions before allocating the signing runner. The same checks are repeated inside trusted PowerShell code.
 
 ## Fresh-turn boundary

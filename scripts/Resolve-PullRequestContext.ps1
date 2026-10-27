@@ -6,7 +6,7 @@ param(
     [string] $EventPath,
 
     [Parameter(Mandatory)]
-    [ValidateSet('pull_request')]
+    [ValidateSet('pull_request_target')]
     [string] $EventName,
 
     [Parameter(Mandatory)]
