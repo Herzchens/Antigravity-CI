@@ -256,35 +256,66 @@ function Assert-RewritableCommitHeaders {
         [void] $allowedHeaders.Add($name)
     }
 
+    $headerCounts = @{}
+    $currentHeader = $null
     $lineStart = 0
+
     while ($lineStart -lt $headerEnd) {
         $lineEnd = $lineStart
         while ($lineEnd -lt $headerEnd -and $Bytes[$lineEnd] -ne 10) {
             $lineEnd++
         }
 
-        if ($Bytes[$lineStart] -ne 32 -and $Bytes[$lineStart] -ne 9) {
-            $space = $lineStart
-            while ($space -lt $lineEnd -and $Bytes[$space] -ne 32) {
-                $space++
+        if ($Bytes[$lineStart] -eq 32 -or $Bytes[$lineStart] -eq 9) {
+            if ($currentHeader -notin @('gpgsig', 'gpgsig-sha256')) {
+                throw "Commit $Sha contains an invalid continuation line outside a signature header."
             }
 
-            if ($space -eq $lineStart -or $space -ge $lineEnd) {
-                throw "Commit $Sha contains a malformed commit header."
-            }
+            $lineStart = $lineEnd + 1
+            continue
+        }
 
-            $name = [System.Text.Encoding]::ASCII.GetString(
-                $Bytes,
-                $lineStart,
-                $space - $lineStart
-            )
+        $space = $lineStart
+        while ($space -lt $lineEnd -and $Bytes[$space] -ne 32) {
+            $space++
+        }
 
-            if (-not $allowedHeaders.Contains($name)) {
-                throw "Commit $Sha contains unsupported header '$name'; refusing a lossy signing rewrite."
-            }
+        if ($space -eq $lineStart -or $space -ge $lineEnd) {
+            throw "Commit $Sha contains a malformed commit header."
+        }
+
+        $name = [System.Text.Encoding]::ASCII.GetString(
+            $Bytes,
+            $lineStart,
+            $space - $lineStart
+        )
+
+        if (-not $allowedHeaders.Contains($name)) {
+            throw "Commit $Sha contains unsupported header '$name'; refusing a lossy signing rewrite."
+        }
+
+        $currentHeader = $name
+        if ($headerCounts.ContainsKey($name)) {
+            $headerCounts[$name]++
+        }
+        else {
+            $headerCounts[$name] = 1
         }
 
         $lineStart = $lineEnd + 1
+    }
+
+    foreach ($requiredHeader in @('tree', 'parent', 'author', 'committer')) {
+        $count = if ($headerCounts.ContainsKey($requiredHeader)) {
+            [int] $headerCounts[$requiredHeader]
+        }
+        else {
+            0
+        }
+
+        if ($count -ne 1) {
+            throw "Commit $Sha must contain exactly one '$requiredHeader' header; found $count."
+        }
     }
 }
 

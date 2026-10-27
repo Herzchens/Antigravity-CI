@@ -70,8 +70,17 @@ try {
         throw 'Generated caller workflow does not expose the GitHub App reporter secret mapping.'
     }
 
+    if ($callerText -notmatch '(?m)^  pull_request_target:$') {
+        throw 'Generated caller workflow does not use the trusted-base pull_request_target entrypoint.'
+    }
+
+    if ($callerText -match '(?m)^  pull_request:$') {
+        throw 'Generated caller workflow must not use a PR-controlled pull_request entrypoint.'
+    }
+
     Write-Host '[PASS] caller generator renders an exact-SHA reusable workflow reference'
     Write-Host '[PASS] caller generator safely quotes Windows key paths'
+    Write-Host '[PASS] caller generator uses the trusted default-branch PR event'
 
     Assert-Throws -Name 'caller generator refuses overwrite without Force' -Action {
         & $callerGenerator @callerParameters

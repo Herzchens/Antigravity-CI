@@ -90,8 +90,12 @@ foreach ($workflowPath in $workflowPaths) {
     $fullPath = Join-Path $repoRoot ($workflowPath.Replace('/', [System.IO.Path]::DirectorySeparatorChar))
     $text = Get-Content -LiteralPath $fullPath -Raw -Encoding utf8
 
+    if ($text -match '(?mi)^\s*pull_request_target\s*:' -or
+        $text -match '(?mi)^\s*on\s*:\s*.*pull_request_target') {
+        throw "Workflow '$workflowPath' must not directly trigger privileged pull_request_target execution."
+    }
+
     foreach ($forbidden in @(
-        'pull_request_target',
         'secrets: inherit',
         'persist-credentials: true',
         'write-all',
@@ -121,7 +125,7 @@ foreach ($workflowPath in $workflowPaths) {
     }
 }
 
-Write-Host '[PASS] tracked workflows avoid forbidden triggers/secret shortcuts and pin external uses by SHA'
+Write-Host '[PASS] tracked infrastructure workflows avoid direct privileged triggers/secret shortcuts and pin external uses by SHA'
 
 $scriptPaths = @(
     $tracked |
