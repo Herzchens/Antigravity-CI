@@ -80,3 +80,17 @@ Assert-NotContains -Text $caller -Needle 'secrets: inherit' -Name 'caller maps s
 
 Assert-Contains -Text $workflow -Needle 'Enforce deployment capability ceiling' -Name 'trusted project capabilities are checked before AGY'
 Assert-Contains -Text $workflow -Needle 'default: false' -Name 'deployment capabilities default to denied'
+
+
+Assert-Contains -Text $workflow -Needle 'Verify signing runner security boundary' -Name 'signing runner security preflight is required'
+Assert-Contains -Text $workflow -Needle 'Verify isolated review runner security boundary' -Name 'review runner security preflight is required'
+Assert-Contains -Text $workflow -Needle 'inputs.signing_public_key_path' -Name 'signing key path is role-specific'
+Assert-Contains -Text $workflow -Needle 'inputs.review_trusted_public_key_path' -Name 'review verification key path is role-specific'
+Assert-NotContains -Text $workflow -Needle 'inputs.trusted_public_key_path' -Name 'shared signing/review key path is forbidden'
+Assert-Contains -Text $caller -Needle "review_trusted_public_key_path: 'C:\ProgramData\Antigravity-CI\trusted_signing_key.pub'" -Name 'caller uses a public-only review key location'
+
+
+Assert-Contains -Text $workflow -Needle 'signing_runner_identity:' -Name 'signing runner identity is exported for review isolation'
+Assert-Contains -Text $workflow -Needle 'signing_key_fingerprint:' -Name 'signing key fingerprint is exported for review verification'
+Assert-Contains -Text $workflow -Needle '-ForbiddenIdentity $env:SIGNING_RUNNER_IDENTITY' -Name 'review runner cannot reuse signing OS identity'
+Assert-Contains -Text $workflow -Needle '-ExpectedTrustedKeyFingerprint $env:SIGNING_KEY_FINGERPRINT' -Name 'review public-key copy must match signing key fingerprint'
