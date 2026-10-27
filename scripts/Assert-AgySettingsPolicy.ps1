@@ -29,33 +29,6 @@ function Get-PropertyValue {
     $property.Value
 }
 
-function Test-MeaningfulValue {
-    param(
-        [AllowNull()]
-        [object] $Value
-    )
-
-    if ($null -eq $Value) {
-        return $false
-    }
-
-    if ($Value -is [string]) {
-        return -not [string]::IsNullOrWhiteSpace($Value)
-    }
-
-    if ($Value -is [System.Collections.IEnumerable] -and
-        $Value -isnot [System.Collections.IDictionary] -and
-        $Value -isnot [string]) {
-        return @($Value).Count -gt 0
-    }
-
-    if ($Value -is [bool]) {
-        return [bool] $Value
-    }
-
-    return $true
-}
-
 $resolvedSettingsPath = (Resolve-Path -LiteralPath $SettingsPath -ErrorAction Stop).Path
 $item = Get-Item -LiteralPath $resolvedSettingsPath -ErrorAction Stop
 
@@ -77,6 +50,27 @@ catch {
 
 if ($null -eq $settings -or $settings -isnot [psobject]) {
     throw 'Antigravity settings.json must contain a JSON object.'
+}
+
+$allowedTopLevel = [System.Collections.Generic.HashSet[string]]::new(
+    [System.StringComparer]::Ordinal
+)
+foreach ($name in @(
+    '$schema',
+    'enableTerminalSandbox',
+    'toolPermission',
+    'allowNonWorkspaceAccess',
+    'historySize',
+    'disableSlashCommands',
+    'permissions'
+)) {
+    [void] $allowedTopLevel.Add($name)
+}
+
+foreach ($property in $settings.PSObject.Properties) {
+    if (-not $allowedTopLevel.Contains($property.Name)) {
+        throw "Review account settings contain unsupported key '$($property.Name)'."
+    }
 }
 
 $toolPermission = [string] (Get-PropertyValue -Object $settings -Name 'toolPermission')
@@ -111,29 +105,41 @@ if ($disableSlashCommands -isnot [bool] -or -not [bool] $disableSlashCommands) {
 
 $permissions = Get-PropertyValue -Object $settings -Name 'permissions'
 if ($null -ne $permissions) {
-    $allow = Get-PropertyValue -Object $permissions -Name 'allow'
-    if ($null -ne $allow -and @($allow).Count -gt 0) {
-        throw 'Review account permissions.allow must be empty; privileged allow rules are not permitted.'
+    if ($permissions -isnot [psobject] -or $permissions -is [string]) {
+        throw 'Review account permissions must be a JSON object.'
     }
-}
 
-foreach ($dangerousKey in @(
-    'customModelsConfig',
-    'gcp',
-    'sandboxProxy',
-    'statusLine',
-    'title',
-    'trustedWorkspaces'
-)) {
-    $value = Get-PropertyValue -Object $settings -Name $dangerousKey
-    if (Test-MeaningfulValue -Value $value) {
-        throw "Review account setting '$dangerousKey' is not permitted."
+    $allowedPermissionKeys = [System.Collections.Generic.HashSet[string]]::new(
+        [System.StringComparer]::Ordinal
+    )
+    foreach ($name in @('allow', 'ask', 'deny')) {
+        [void] $allowedPermissionKeys.Add($name)
     }
-}
 
-$modelProvider = Get-PropertyValue -Object $settings -Name 'modelProvider'
-if ($null -ne $modelProvider -and -not [string]::IsNullOrWhiteSpace([string] $modelProvider)) {
-    throw 'Review account must use cached Antigravity account authentication, not a modelProvider override.'
+    foreach ($property in $permissions.PSObject.Properties) {
+        if (-not $allowedPermissionKeys.Contains($property.Name)) {
+            throw "Review account permissions contain unsupported key '$($property.Name)'."
+        }
+    }
+
+    foreach ($name in @('allow', 'ask')) {
+        $rules = Get-PropertyValue -Object $permissions -Name $name
+        if ($null -ne $rules) {
+            if ($rules -is [string] -or $rules -isnot [System.Collections.IEnumerable]) {
+                throw "Review account permissions.$name must be an array."
+            }
+
+            if (@($rules).Count -gt 0) {
+                throw "Review account permissions.$name must be empty."
+            }
+        }
+    }
+
+    $deny = Get-PropertyValue -Object $permissions -Name 'deny'
+    if ($null -ne $deny -and
+        ($deny -is [string] -or $deny -isnot [System.Collections.IEnumerable])) {
+        throw 'Review account permissions.deny must be an array when configured.'
+    }
 }
 
 $hash = (Get-FileHash -LiteralPath $resolvedSettingsPath -Algorithm SHA256 -ErrorAction Stop).Hash.ToLowerInvariant()

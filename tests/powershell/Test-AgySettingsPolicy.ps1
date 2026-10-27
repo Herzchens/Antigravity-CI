@@ -57,6 +57,7 @@ try {
     }
 
     Write-Host '[PASS] minimal review settings policy is accepted'
+    Write-Host '[PASS] restrictive permissions.deny rules remain allowed'
 
     $cases = @(
         @{
@@ -70,6 +71,18 @@ try {
         @{
             Name = 'permission allow rules are rejected'
             Json = '{"enableTerminalSandbox":true,"toolPermission":"proceed-in-sandbox","historySize":0,"disableSlashCommands":true,"permissions":{"allow":["command(git push)"]}}'
+        },
+        @{
+            Name = 'permission ask rules are rejected'
+            Json = '{"enableTerminalSandbox":true,"toolPermission":"proceed-in-sandbox","historySize":0,"disableSlashCommands":true,"permissions":{"ask":["command(*)"]}}'
+        },
+        @{
+            Name = 'unknown permission field is rejected'
+            Json = '{"enableTerminalSandbox":true,"toolPermission":"proceed-in-sandbox","historySize":0,"disableSlashCommands":true,"permissions":{"futureMode":[]}}'
+        },
+        @{
+            Name = 'unknown top-level setting is rejected'
+            Json = '{"enableTerminalSandbox":true,"toolPermission":"proceed-in-sandbox","historySize":0,"disableSlashCommands":true,"futureCapability":true}'
         },
         @{
             Name = 'persistent auto mode is rejected'
