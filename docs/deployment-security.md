@@ -4,6 +4,8 @@ Antigravity-CI separates signing, review, and publication into distinct trust do
 
 ## Signing runner
 
+Every privileged job first replaces system/global Git configuration with a fresh per-job isolation file, an empty hooks directory, an empty global attributes file, and an empty Git template directory. This happens before any checkout. The signing gate selects the SSH signing key explicitly; it does not depend on user-level `gpg.format`, `gpg.ssh.program`, or `user.signingkey` configuration.
+
 The signing runner owns the only private signing key. Keep the private key on the machine and load it through the Windows OpenSSH agent; do not place the private key or its passphrase in GitHub secrets. The workflow receives only the public-key path plus a dedicated branch-update credential. The write credential is scoped to the signing step and is not persisted by checkout.
 
 ## Review runner

@@ -75,6 +75,9 @@ try {
         Select-Object -First 1
     ).Trim()
 
+    Invoke-Checked -FilePath 'git' -Arguments @('config', '--unset', 'gpg.format') -WorkingDirectory $fixtureRepo
+    Invoke-Checked -FilePath 'git' -Arguments @('config', '--unset', 'gpg.ssh.program') -WorkingDirectory $fixtureRepo
+
     $result = & $verificationScript -RepositoryPath $fixtureRepo -CommitSha $signedSha -SigningKey "$signingKey.pub"
 
     if (-not $result.Valid) {
@@ -114,7 +117,7 @@ try {
         throw 'Expected unsigned commit verification to fail.'
     }
 
-    Write-Host '[PASS] trusted SSH-signed commit accepted'
+    Write-Host '[PASS] trusted SSH-signed commit accepted without ambient signing-format configuration'
     Write-Host '[PASS] commit signed by another SSH key rejected'
     Write-Host '[PASS] unsigned commit rejected'
 }

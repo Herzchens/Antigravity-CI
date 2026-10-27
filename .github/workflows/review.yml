@@ -112,6 +112,51 @@ jobs:
           }
 
 
+      - name: Isolate Git host configuration
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $isolationRoot = Join-Path $env:RUNNER_TEMP (
+            'antigravity-ci\git-host-' + $env:GITHUB_JOB + '-' + $env:GITHUB_RUN_ID + '-' + $env:GITHUB_RUN_ATTEMPT
+          )
+          Remove-Item -LiteralPath $isolationRoot -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Path $isolationRoot -Force | Out-Null
+
+          $globalConfig = Join-Path $isolationRoot 'global.gitconfig'
+          $attributesPath = Join-Path $isolationRoot 'empty.gitattributes'
+          $hooksPath = Join-Path $isolationRoot 'empty-hooks'
+          $templatePath = Join-Path $isolationRoot 'empty-template'
+
+          New-Item -ItemType Directory -Path $hooksPath -Force | Out-Null
+          New-Item -ItemType Directory -Path $templatePath -Force | Out-Null
+          [System.IO.File]::WriteAllText($globalConfig, '', [System.Text.UTF8Encoding]::new($false))
+          [System.IO.File]::WriteAllText($attributesPath, '', [System.Text.UTF8Encoding]::new($false))
+
+          & git config --file $globalConfig core.hooksPath $hooksPath
+          if ($LASTEXITCODE -ne 0) { throw 'Unable to configure isolated Git hooks path.' }
+
+          & git config --file $globalConfig core.attributesFile $attributesPath
+          if ($LASTEXITCODE -ne 0) { throw 'Unable to configure isolated Git attributes file.' }
+
+          & git config --file $globalConfig credential.interactive false
+          if ($LASTEXITCODE -ne 0) { throw 'Unable to disable interactive Git credentials.' }
+
+          foreach ($entry in @(
+            'GIT_CONFIG_NOSYSTEM=1',
+            ('GIT_CONFIG_GLOBAL=' + $globalConfig),
+            'GIT_CONFIG_COUNT=0',
+            'GIT_CONFIG_PARAMETERS=',
+            'GIT_ATTR_NOSYSTEM=1',
+            ('GIT_TEMPLATE_DIR=' + $templatePath),
+            'GIT_TERMINAL_PROMPT=0',
+            'GCM_INTERACTIVE=Never',
+            'GH_PROMPT_DISABLED=1',
+            ('ANTIGRAVITY_GIT_ISOLATION_ROOT=' + $isolationRoot)
+          )) {
+            Add-Content -LiteralPath $env:GITHUB_ENV -Value $entry -Encoding utf8
+          }
+
       - name: Checkout trusted Antigravity-CI implementation
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -133,7 +178,8 @@ jobs:
         run: |
           $security = & (Join-Path $env:INFRA_PATH 'scripts\Assert-RunnerSecurity.ps1') `
             -Role Signing `
-            -TrustedPublicKey $env:SIGNING_PUBLIC_KEY_PATH
+            -TrustedPublicKey $env:SIGNING_PUBLIC_KEY_PATH `
+            -RequireGitIsolation
 
           Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "runner_identity=$($security.Identity)" -Encoding utf8
           Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "trusted_fingerprint=$($security.TrustedKeyFingerprint)" -Encoding utf8
@@ -207,6 +253,7 @@ jobs:
               -HeadSha $context.HeadSha `
               -BranchName $context.HeadRef `
               -TrustedPublicKey $env:TRUSTED_PUBLIC_KEY_PATH `
+              -SigningKey $env:TRUSTED_PUBLIC_KEY_PATH `
               -ExpectedRemoteHead $context.HeadSha `
               -Push
           }
@@ -301,6 +348,51 @@ jobs:
           }
 
 
+      - name: Isolate Git host configuration
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $isolationRoot = Join-Path $env:RUNNER_TEMP (
+            'antigravity-ci\git-host-' + $env:GITHUB_JOB + '-' + $env:GITHUB_RUN_ID + '-' + $env:GITHUB_RUN_ATTEMPT
+          )
+          Remove-Item -LiteralPath $isolationRoot -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Path $isolationRoot -Force | Out-Null
+
+          $globalConfig = Join-Path $isolationRoot 'global.gitconfig'
+          $attributesPath = Join-Path $isolationRoot 'empty.gitattributes'
+          $hooksPath = Join-Path $isolationRoot 'empty-hooks'
+          $templatePath = Join-Path $isolationRoot 'empty-template'
+
+          New-Item -ItemType Directory -Path $hooksPath -Force | Out-Null
+          New-Item -ItemType Directory -Path $templatePath -Force | Out-Null
+          [System.IO.File]::WriteAllText($globalConfig, '', [System.Text.UTF8Encoding]::new($false))
+          [System.IO.File]::WriteAllText($attributesPath, '', [System.Text.UTF8Encoding]::new($false))
+
+          & git config --file $globalConfig core.hooksPath $hooksPath
+          if ($LASTEXITCODE -ne 0) { throw 'Unable to configure isolated Git hooks path.' }
+
+          & git config --file $globalConfig core.attributesFile $attributesPath
+          if ($LASTEXITCODE -ne 0) { throw 'Unable to configure isolated Git attributes file.' }
+
+          & git config --file $globalConfig credential.interactive false
+          if ($LASTEXITCODE -ne 0) { throw 'Unable to disable interactive Git credentials.' }
+
+          foreach ($entry in @(
+            'GIT_CONFIG_NOSYSTEM=1',
+            ('GIT_CONFIG_GLOBAL=' + $globalConfig),
+            'GIT_CONFIG_COUNT=0',
+            'GIT_CONFIG_PARAMETERS=',
+            'GIT_ATTR_NOSYSTEM=1',
+            ('GIT_TEMPLATE_DIR=' + $templatePath),
+            'GIT_TERMINAL_PROMPT=0',
+            'GCM_INTERACTIVE=Never',
+            'GH_PROMPT_DISABLED=1',
+            ('ANTIGRAVITY_GIT_ISOLATION_ROOT=' + $isolationRoot)
+          )) {
+            Add-Content -LiteralPath $env:GITHUB_ENV -Value $entry -Encoding utf8
+          }
+
       - name: Checkout trusted Antigravity-CI implementation
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -328,7 +420,8 @@ jobs:
             -TrustedPublicKey $env:REVIEW_TRUSTED_PUBLIC_KEY_PATH `
             -ForbiddenIdentity $env:SIGNING_RUNNER_IDENTITY `
             -ExpectedTrustedKeyFingerprint $env:SIGNING_KEY_FINGERPRINT `
-            -AgyExecutable $env:AGY_EXECUTABLE
+            -AgyExecutable $env:AGY_EXECUTABLE `
+            -RequireGitIsolation
 
           Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "runner_identity=$($security.Identity)" -Encoding utf8
 
@@ -525,6 +618,51 @@ jobs:
             }
           }
 
+      - name: Isolate Git host configuration
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $isolationRoot = Join-Path $env:RUNNER_TEMP (
+            'antigravity-ci\git-host-' + $env:GITHUB_JOB + '-' + $env:GITHUB_RUN_ID + '-' + $env:GITHUB_RUN_ATTEMPT
+          )
+          Remove-Item -LiteralPath $isolationRoot -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Path $isolationRoot -Force | Out-Null
+
+          $globalConfig = Join-Path $isolationRoot 'global.gitconfig'
+          $attributesPath = Join-Path $isolationRoot 'empty.gitattributes'
+          $hooksPath = Join-Path $isolationRoot 'empty-hooks'
+          $templatePath = Join-Path $isolationRoot 'empty-template'
+
+          New-Item -ItemType Directory -Path $hooksPath -Force | Out-Null
+          New-Item -ItemType Directory -Path $templatePath -Force | Out-Null
+          [System.IO.File]::WriteAllText($globalConfig, '', [System.Text.UTF8Encoding]::new($false))
+          [System.IO.File]::WriteAllText($attributesPath, '', [System.Text.UTF8Encoding]::new($false))
+
+          & git config --file $globalConfig core.hooksPath $hooksPath
+          if ($LASTEXITCODE -ne 0) { throw 'Unable to configure isolated Git hooks path.' }
+
+          & git config --file $globalConfig core.attributesFile $attributesPath
+          if ($LASTEXITCODE -ne 0) { throw 'Unable to configure isolated Git attributes file.' }
+
+          & git config --file $globalConfig credential.interactive false
+          if ($LASTEXITCODE -ne 0) { throw 'Unable to disable interactive Git credentials.' }
+
+          foreach ($entry in @(
+            'GIT_CONFIG_NOSYSTEM=1',
+            ('GIT_CONFIG_GLOBAL=' + $globalConfig),
+            'GIT_CONFIG_COUNT=0',
+            'GIT_CONFIG_PARAMETERS=',
+            'GIT_ATTR_NOSYSTEM=1',
+            ('GIT_TEMPLATE_DIR=' + $templatePath),
+            'GIT_TERMINAL_PROMPT=0',
+            'GCM_INTERACTIVE=Never',
+            'GH_PROMPT_DISABLED=1',
+            ('ANTIGRAVITY_GIT_ISOLATION_ROOT=' + $isolationRoot)
+          )) {
+            Add-Content -LiteralPath $env:GITHUB_ENV -Value $entry -Encoding utf8
+          }
+
       - name: Checkout trusted Antigravity-CI implementation
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -549,6 +687,7 @@ jobs:
             ForbiddenIdentities = @($env:REVIEW_RUNNER_IDENTITY)
           }
 
+          $securityParameters.RequireGitIsolation = $true
           & (Join-Path $env:INFRA_PATH 'scripts\Assert-RunnerSecurity.ps1') @securityParameters | Out-Null
 
       - name: Download validated AGY report

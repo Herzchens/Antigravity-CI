@@ -206,4 +206,33 @@ Assert-Contains -Text $workflow -Needle '-ForbiddenIdentity $env:SIGNING_RUNNER_
 Assert-Contains -Text $workflow -Needle 'ForbiddenIdentities = @($env:REVIEW_RUNNER_IDENTITY)' -Name 'publisher cannot reuse the review identity'
 Assert-Contains -Text $workflow -Needle 'Path still exists after removal' -Name 'persistent workspace cleanup fails closed'
 
+$gitIsolationStepCount = [regex]::Matches(
+    $workflow,
+    '(?m)^\s*- name: Isolate Git host configuration\s*$'
+).Count
+if ($gitIsolationStepCount -ne 3) {
+    throw "Expected Git host isolation in all three privileged jobs, found $gitIsolationStepCount."
+}
+Write-Host '[PASS] every privileged job isolates host Git configuration before checkout'
+
+foreach ($requiredIsolation in @(
+    'GIT_CONFIG_NOSYSTEM=1',
+    'GIT_CONFIG_COUNT=0',
+    'GIT_CONFIG_PARAMETERS=',
+    'GIT_ATTR_NOSYSTEM=1',
+    'GIT_TEMPLATE_DIR=',
+    'core.hooksPath',
+    'core.attributesFile',
+    'credential.interactive'
+)) {
+    Assert-Contains -Text $workflow -Needle $requiredIsolation -Name "Git isolation configures $requiredIsolation"
+}
+
+if ([regex]::Matches($workflow, '-RequireGitIsolation').Count -ne 3) {
+    throw 'Every privileged runner preflight must require Git isolation.'
+}
+Write-Host '[PASS] every privileged runner preflight requires Git isolation'
+
+Assert-Contains -Text $signJobText -Needle '-SigningKey $env:TRUSTED_PUBLIC_KEY_PATH' -Name 'signing key selection is explicit and independent of ambient Git config'
+
 Write-Host '[PASS] workflow contract is internally consistent'
