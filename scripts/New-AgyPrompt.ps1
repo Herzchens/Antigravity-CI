@@ -163,6 +163,8 @@ $reviewContext = [ordered]@{
 }
 
 $contextJson = $reviewContext | ConvertTo-Json -Depth 32
+$contextJson = $contextJson.Replace('&', '\u0026').Replace('<', '\u003c').Replace('>', '\u003e')
+
 $normalizedReportSchema = (
     ConvertFrom-Json -InputObject $reportSchemaText -Depth 32 |
     ConvertTo-Json -Depth 32
