@@ -54,3 +54,10 @@ Assert-Contains -Needle "'AGY_ADC_AUTH'" -Name 'sandbox smoke strips Antigravity
 Assert-Contains -Needle "'GEMINI_API_KEY'" -Name 'sandbox smoke strips Gemini API-key auth override'
 Assert-Contains -Needle "'GOOGLE_APPLICATION_CREDENTIALS'" -Name 'sandbox smoke strips Google credential-file override'
 Assert-Contains -Needle 'credentials?' -Name 'sandbox smoke strips plural credential-named environment values'
+
+Assert-Contains -Needle 'CredWriteW' -Name 'sandbox smoke creates a session-only Windows Credential Manager sentinel'
+Assert-Contains -Needle 'CredReadW' -Name 'sandbox smoke probes Windows Credential Manager access from inside the sandbox'
+Assert-Contains -Needle 'credential_probe_completed' -Name 'credential probe must actually execute before acceptance'
+Assert-Contains -Needle 'credential_read_succeeded' -Name 'credential read outcome is asserted'
+Assert-Contains -Needle 'CredentialManagerReadBlocked = $true' -Name 'Credential Manager isolation is an explicit acceptance invariant'
+Assert-Contains -Needle '[AntigravityCiCredentialSentinel]::Delete($credentialTarget)' -Name 'credential sentinel is deleted during cleanup'

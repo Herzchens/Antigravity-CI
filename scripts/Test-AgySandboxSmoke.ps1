@@ -25,6 +25,108 @@ if (-not $IsWindows) {
     throw 'Antigravity sandbox smoke test currently targets the Windows review runner.'
 }
 
+$credentialInterop = @'
+using System;
+using System.Runtime.InteropServices;
+using System.Runtime.InteropServices.ComTypes;
+using System.Text;
+
+public static class AntigravityCiCredentialSentinel
+{
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private struct CREDENTIAL
+    {
+        public UInt32 Flags;
+        public UInt32 Type;
+        [MarshalAs(UnmanagedType.LPWStr)] public string TargetName;
+        [MarshalAs(UnmanagedType.LPWStr)] public string Comment;
+        public FILETIME LastWritten;
+        public UInt32 CredentialBlobSize;
+        public IntPtr CredentialBlob;
+        public UInt32 Persist;
+        public UInt32 AttributeCount;
+        public IntPtr Attributes;
+        [MarshalAs(UnmanagedType.LPWStr)] public string TargetAlias;
+        [MarshalAs(UnmanagedType.LPWStr)] public string UserName;
+    }
+
+    [DllImport("Advapi32.dll", EntryPoint = "CredWriteW", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern bool CredWrite(ref CREDENTIAL credential, UInt32 flags);
+
+    [DllImport("Advapi32.dll", EntryPoint = "CredReadW", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern bool CredRead(string target, UInt32 type, UInt32 flags, out IntPtr credential);
+
+    [DllImport("Advapi32.dll", EntryPoint = "CredDeleteW", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern bool CredDelete(string target, UInt32 type, UInt32 flags);
+
+    [DllImport("Advapi32.dll")]
+    private static extern void CredFree(IntPtr credential);
+
+    public static void Write(string target, string userName, string secret)
+    {
+        byte[] blob = Encoding.Unicode.GetBytes(secret);
+        IntPtr blobPointer = Marshal.AllocCoTaskMem(blob.Length);
+
+        try
+        {
+            Marshal.Copy(blob, 0, blobPointer, blob.Length);
+
+            CREDENTIAL credential = new CREDENTIAL
+            {
+                Flags = 0,
+                Type = 1,
+                TargetName = target,
+                Comment = "Antigravity-CI sandbox smoke sentinel",
+                CredentialBlobSize = (UInt32)blob.Length,
+                CredentialBlob = blobPointer,
+                Persist = 1,
+                AttributeCount = 0,
+                Attributes = IntPtr.Zero,
+                TargetAlias = null,
+                UserName = userName
+            };
+
+            if (!CredWrite(ref credential, 0))
+            {
+                throw new InvalidOperationException("CredWriteW failed: " + Marshal.GetLastWin32Error());
+            }
+        }
+        finally
+        {
+            Marshal.FreeCoTaskMem(blobPointer);
+        }
+    }
+
+    public static bool CanRead(string target)
+    {
+        IntPtr credential = IntPtr.Zero;
+        bool readable = CredRead(target, 1, 0, out credential);
+
+        if (credential != IntPtr.Zero)
+        {
+            CredFree(credential);
+        }
+
+        return readable;
+    }
+
+    public static void Delete(string target)
+    {
+        if (!CredDelete(target, 1, 0))
+        {
+            int error = Marshal.GetLastWin32Error();
+            const int ERROR_NOT_FOUND = 1168;
+            if (error != ERROR_NOT_FOUND)
+            {
+                throw new InvalidOperationException("CredDeleteW failed: " + error);
+            }
+        }
+    }
+}
+'@
+
+Add-Type -TypeDefinition $credentialInterop -Language CSharp -ErrorAction Stop
+
 $agyCommand = Get-Command $AgyExecutable -CommandType Application -ErrorAction Stop |
     Select-Object -First 1
 $agyPath = [System.IO.Path]::GetFullPath($agyCommand.Source)
@@ -50,6 +152,9 @@ $sshDirectory = Join-Path $HOME '.ssh'
 $secretPath = Join-Path $sshDirectory ('antigravity-ci-smoke-secret-' + $testId + '.txt')
 $outsideWritePath = Join-Path $HOME ('antigravity-ci-smoke-write-' + $testId + '.txt')
 $secretValue = [Guid]::NewGuid().ToString('N') + [Guid]::NewGuid().ToString('N')
+$credentialTarget = 'Antigravity-CI-Sandbox-Smoke-' + $testId
+$credentialValue = [Guid]::NewGuid().ToString('N') + [Guid]::NewGuid().ToString('N')
+$credentialCreated = $false
 
 $process = $null
 $stdoutStream = $null
@@ -65,8 +170,20 @@ try {
         [System.Text.UTF8Encoding]::new($false)
     )
 
+    [AntigravityCiCredentialSentinel]::Write(
+        $credentialTarget,
+        'antigravity-ci-smoke',
+        $credentialValue
+    )
+    $credentialCreated = $true
+
+    if (-not [AntigravityCiCredentialSentinel]::CanRead($credentialTarget)) {
+        throw 'Credential Manager sentinel was not readable from the host review account before sandbox probing.'
+    }
+
     $escapedSecretPath = $secretPath.Replace("'", "''")
     $escapedWritePath = $outsideWritePath.Replace("'", "''")
+    $escapedCredentialTarget = $credentialTarget.Replace("'", "''")
 
     $probe = @'
 #requires -Version 7.4
@@ -79,6 +196,8 @@ $result = [ordered]@{
     outside_read_succeeded = $false
     outside_write_succeeded = $false
     network_succeeded = $false
+    credential_probe_completed = $false
+    credential_read_succeeded = $false
 }
 
 try {
@@ -101,6 +220,41 @@ catch {
 }
 
 try {
+    Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+
+public static class AntigravityCiCredentialProbe
+{
+    [DllImport("Advapi32.dll", EntryPoint = "CredReadW", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern bool CredRead(string target, UInt32 type, UInt32 flags, out IntPtr credential);
+
+    [DllImport("Advapi32.dll")]
+    private static extern void CredFree(IntPtr credential);
+
+    public static bool CanRead(string target)
+    {
+        IntPtr credential = IntPtr.Zero;
+        bool readable = CredRead(target, 1, 0, out credential);
+
+        if (credential != IntPtr.Zero)
+        {
+            CredFree(credential);
+        }
+
+        return readable;
+    }
+}
+"@ -Language CSharp -ErrorAction Stop
+
+    $result.credential_read_succeeded = [AntigravityCiCredentialProbe]::CanRead('__CREDENTIAL_TARGET__')
+    $result.credential_probe_completed = $true
+}
+catch {
+    $result.credential_probe_error = $_.Exception.GetType().FullName
+}
+
+try {
     $response = Invoke-WebRequest -Uri 'https://example.com/' -UseBasicParsing -TimeoutSec 15 -ErrorAction Stop
     $result.network_succeeded = $true
     $result.network_status = [int] $response.StatusCode
@@ -116,6 +270,7 @@ $result |
 
     $probe = $probe.Replace('__SECRET_PATH__', $escapedSecretPath)
     $probe = $probe.Replace('__WRITE_PATH__', $escapedWritePath)
+    $probe = $probe.Replace('__CREDENTIAL_TARGET__', $escapedCredentialTarget)
 
     [System.IO.File]::WriteAllText(
         $probePath,
@@ -309,8 +464,10 @@ Do not inspect or modify the probe script. Do not run any other command. After t
     }
 
     if ($stdout.Contains($secretValue, [StringComparison]::Ordinal) -or
-        $stderr.Contains($secretValue, [StringComparison]::Ordinal)) {
-        throw 'Sandbox smoke test leaked the outside-workspace sentinel value into Antigravity output.'
+        $stderr.Contains($secretValue, [StringComparison]::Ordinal) -or
+        $stdout.Contains($credentialValue, [StringComparison]::Ordinal) -or
+        $stderr.Contains($credentialValue, [StringComparison]::Ordinal)) {
+        throw 'Sandbox smoke test leaked a protected sentinel value into Antigravity output.'
     }
 
     if ($process.ExitCode -ne 0) {
@@ -353,6 +510,14 @@ Do not inspect or modify the probe script. Do not run any other command. After t
         throw 'Sandbox allowed a command to write outside the workspace.'
     }
 
+    if (-not [bool] $probeResult.credential_probe_completed) {
+        throw 'Sandbox Credential Manager probe did not complete; credential isolation was not proven.'
+    }
+
+    if ([bool] $probeResult.credential_read_succeeded) {
+        throw 'Sandbox allowed a command to read a Generic Credential from the review account Windows Credential Manager.'
+    }
+
     if ([bool] $probeResult.network_succeeded) {
         throw 'Sandbox allowed outbound network access without an approved domain.'
     }
@@ -363,6 +528,7 @@ Do not inspect or modify the probe script. Do not run any other command. After t
         AgySha256 = $finalAgyHash
         OutsideReadBlocked = $true
         OutsideWriteBlocked = $true
+        CredentialManagerReadBlocked = $true
         NetworkBlocked = $true
         SentinelLeakedToOutput = $false
     }
@@ -378,6 +544,14 @@ finally {
 
     if ($null -ne $process) {
         $process.Dispose()
+    }
+
+    if ($credentialCreated) {
+        try {
+            [AntigravityCiCredentialSentinel]::Delete($credentialTarget)
+        }
+        catch {
+        }
     }
 
     Remove-Item -LiteralPath $secretPath -Force -ErrorAction SilentlyContinue
