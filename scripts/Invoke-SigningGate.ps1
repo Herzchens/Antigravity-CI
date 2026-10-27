@@ -266,10 +266,17 @@ function New-SignedCommit {
             $messagePath
         )
 
-        $newSha = ($result.Output | Select-Object -First 1).Trim().ToLowerInvariant()
-        if ($newSha -notmatch '^[0-9a-f]{40}$') {
-            throw "Signing commit $($Record.Sha) did not return a valid commit SHA."
+        $shaCandidates = @(
+            $result.Output |
+            ForEach-Object { ([string] $_).Trim().ToLowerInvariant() } |
+            Where-Object { $_ -match '^[0-9a-f]{40}$' }
+        )
+
+        if ($shaCandidates.Count -ne 1) {
+            throw "Signing commit $($Record.Sha) did not return exactly one commit SHA."
         }
+
+        $newSha = $shaCandidates[0]
 
         $newTree = (Invoke-Git -Arguments @(
             'rev-parse',

@@ -230,20 +230,37 @@ try {
     Add-Content -LiteralPath (Join-Path $workRepo 'fixture.txt') -Value 'three'
     Invoke-Checked -FilePath 'git' -Arguments @('add', 'fixture.txt') -WorkingDirectory $workRepo
     Invoke-Checked -FilePath 'git' -Arguments @('commit', '--quiet', '-m', 'third change') -WorkingDirectory $workRepo
-    Invoke-Checked -FilePath 'git' -Arguments @('push', '-q', 'origin', 'feature') -WorkingDirectory $workRepo
 
-    $movedHead = (
+    $staleCandidate = (
         Invoke-Checked -FilePath 'git' -Arguments @('rev-parse', 'HEAD') -WorkingDirectory $workRepo |
         Select-Object -First 1
     ).Trim()
 
+    Invoke-Checked -FilePath 'git' -Arguments @('push', '-q', 'origin', 'feature') -WorkingDirectory $workRepo
+
+    Add-Content -LiteralPath (Join-Path $workRepo 'fixture.txt') -Value 'four'
+    Invoke-Checked -FilePath 'git' -Arguments @('add', 'fixture.txt') -WorkingDirectory $workRepo
+    Invoke-Checked -FilePath 'git' -Arguments @('commit', '--quiet', '-m', 'remote moves again') -WorkingDirectory $workRepo
+    Invoke-Checked -FilePath 'git' -Arguments @('push', '-q', 'origin', 'feature') -WorkingDirectory $workRepo
+
+    $remoteMovedHead = (
+        Invoke-Checked -FilePath 'git' -Arguments @('rev-parse', 'HEAD') -WorkingDirectory $workRepo |
+        Select-Object -First 1
+    ).Trim()
+
+    if ($remoteMovedHead -eq $staleCandidate) {
+        throw 'Stale-race fixture did not advance the remote branch.'
+    }
+
+    Invoke-Checked -FilePath 'git' -Arguments @('reset', '--hard', $staleCandidate) -WorkingDirectory $workRepo | Out-Null
+
     $staleGateArguments = @{
         RepositoryPath = $workRepo
         BaseSha = $baseSha
-        HeadSha = $movedHead
+        HeadSha = $staleCandidate
         BranchName = 'feature'
         TrustedPublicKey = "$signingKey.pub"
-        ExpectedRemoteHead = $result.SignedHeadSha
+        ExpectedRemoteHead = $staleCandidate
         Push = $true
     }
 
@@ -262,7 +279,7 @@ try {
     Write-Host '[PASS] preserve mode keeps commit count and commit subjects'
     Write-Host '[PASS] final tree is unchanged'
     Write-Host '[PASS] every rewritten commit verifies with the trusted SSH key'
-    Write-Host '[PASS] stale remote head is rejected before lease-protected update'
+    Write-Host '[PASS] real remote-head race is rejected before lease-protected update'
 }
 finally {
     if (Test-Path -LiteralPath $tempRoot) {
