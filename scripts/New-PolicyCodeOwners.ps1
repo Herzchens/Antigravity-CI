@@ -42,6 +42,10 @@ function Normalize-RepositoryPath {
         throw "$Name must be a safe repository-relative path."
     }
 
+    if ($normalized -match '[\s*?\[\]#!]') {
+        throw "$Name must be an exact CODEOWNERS-safe path without whitespace or pattern metacharacters."
+    }
+
     $normalized
 }
 
@@ -51,10 +55,11 @@ if (-not $callerPath.StartsWith('.github/workflows/', [StringComparison]::Ordina
     throw 'CallerWorkflowPath must reference a YAML workflow under .github/workflows/.'
 }
 
-$policyPaths = @(
-    $callerPath,
-    '.agy/project.toml'
-)
+$policyPaths = [ordered]@{
+    '/.github/CODEOWNERS' = @('/.github/CODEOWNERS', '.github/CODEOWNERS')
+    ('/' + $callerPath) = @(('/' + $callerPath), $callerPath)
+    '/.agy/project.toml' = @('/.agy/project.toml', '.agy/project.toml')
+}
 
 $fullOutputPath = [System.IO.Path]::GetFullPath($OutputPath)
 if ([System.IO.Path]::GetFileName($fullOutputPath) -cne 'CODEOWNERS') {
@@ -64,6 +69,10 @@ if ([System.IO.Path]::GetFileName($fullOutputPath) -cne 'CODEOWNERS') {
 $parent = Split-Path -Parent $fullOutputPath
 if ([string]::IsNullOrWhiteSpace($parent)) {
     throw 'OutputPath must have a parent directory.'
+}
+
+if ((Split-Path -Leaf $parent) -cne '.github') {
+    throw 'OutputPath must be the repository .github/CODEOWNERS file.'
 }
 
 $existingLines = [System.Collections.Generic.List[string]]::new()
@@ -84,8 +93,16 @@ foreach ($line in $existingLines) {
 
     $parts = @($trimmed -split '\s+')
     $pattern = $parts[0]
+    $canonicalPattern = $null
 
-    if ($policyPaths -ccontains $pattern) {
+    foreach ($entry in $policyPaths.GetEnumerator()) {
+        if (@($entry.Value) -ccontains $pattern) {
+            $canonicalPattern = [string] $entry.Key
+            break
+        }
+    }
+
+    if ($null -ne $canonicalPattern) {
         $owners = if ($parts.Count -gt 1) {
             @($parts[1..($parts.Count - 1)] | Where-Object {
                 -not $_.StartsWith('#', [StringComparison]::Ordinal)
@@ -115,7 +132,7 @@ if ($preserved.Count -gt 0) {
 }
 
 $preserved.Add('# Antigravity-CI privileged policy files. Keep these exact entries last so they override broader patterns.')
-foreach ($path in $policyPaths) {
+foreach ($path in $policyPaths.Keys) {
     $preserved.Add("$path $CodeOwner")
 }
 
@@ -136,7 +153,8 @@ New-Item -ItemType Directory -Path $parent -Force -ErrorAction Stop | Out-Null
 [pscustomobject][ordered]@{
     Path = $fullOutputPath
     CodeOwner = $CodeOwner
+    CodeOwnersPath = '.github/CODEOWNERS'
     CallerWorkflowPath = $callerPath
     ProjectConfigPath = '.agy/project.toml'
-    PolicyEntryCount = 2
+    PolicyEntryCount = 3
 }
