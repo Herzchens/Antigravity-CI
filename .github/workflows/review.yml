@@ -333,13 +333,17 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           TARGET_REPOSITORY: ${{ github.repository }}
           TARGET_PR: ${{ github.event.pull_request.number }}
+          TARGET_BASE_REF: ${{ github.event.pull_request.base.ref }}
+          TARGET_BASE: ${{ github.event.pull_request.base.sha }}
           TARGET_HEAD: ${{ github.event.pull_request.head.sha }}
           INFRA_PATH: ${{ github.workspace }}\infrastructure
         run: |
           & (Join-Path $env:INFRA_PATH 'scripts\Assert-CurrentPullRequestHead.ps1') `
             -Repository $env:TARGET_REPOSITORY `
             -PrNumber ([int] $env:TARGET_PR) `
-            -ExpectedHeadSha $env:TARGET_HEAD | Out-Null
+            -ExpectedHeadSha $env:TARGET_HEAD `
+            -ExpectedBaseSha $env:TARGET_BASE `
+            -ExpectedBaseRef $env:TARGET_BASE_REF | Out-Null
 
       - name: Prepare trusted exact-head review
         shell: pwsh
@@ -543,19 +547,23 @@ jobs:
             throw 'Downloaded AGY report digest does not match the validated review output.'
           }
 
-      - name: Revalidate exact PR head before publication
+      - name: Revalidate exact PR state before publication
         shell: pwsh
         env:
           GITHUB_TOKEN: ${{ github.token }}
           TARGET_REPOSITORY: ${{ github.repository }}
           TARGET_PR: ${{ github.event.pull_request.number }}
+          TARGET_BASE_REF: ${{ github.event.pull_request.base.ref }}
+          TARGET_BASE: ${{ github.event.pull_request.base.sha }}
           TARGET_HEAD: ${{ github.event.pull_request.head.sha }}
           INFRA_PATH: ${{ github.workspace }}\infrastructure
         run: |
           & (Join-Path $env:INFRA_PATH 'scripts\Assert-CurrentPullRequestHead.ps1') `
             -Repository $env:TARGET_REPOSITORY `
             -PrNumber ([int] $env:TARGET_PR) `
-            -ExpectedHeadSha $env:TARGET_HEAD | Out-Null
+            -ExpectedHeadSha $env:TARGET_HEAD `
+            -ExpectedBaseSha $env:TARGET_BASE `
+            -ExpectedBaseRef $env:TARGET_BASE_REF | Out-Null
 
       - name: Create GitHub App reporter token
         id: reporter_app
@@ -564,6 +572,9 @@ jobs:
         with:
           client-id: ${{ inputs.reporter_app_client_id }}
           private-key: ${{ secrets.reporter_app_private_key }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-pull-requests: write
 
       - name: Publish report with GitHub App identity
         if: inputs.reporter_app_client_id != ''

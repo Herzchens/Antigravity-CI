@@ -14,6 +14,14 @@ param(
     [ValidatePattern('^[0-9a-f]{40}$')]
     [string] $ExpectedHeadSha,
 
+    [Parameter(Mandatory)]
+    [ValidatePattern('^[0-9a-f]{40}$')]
+    [string] $ExpectedBaseSha,
+
+    [Parameter(Mandatory)]
+    [ValidatePattern('^[A-Za-z0-9._/-]+$')]
+    [string] $ExpectedBaseRef,
+
     [ValidatePattern('^[A-Za-z_][A-Za-z0-9_]*$')]
     [string] $TokenEnvironmentVariable = 'GITHUB_TOKEN'
 )
@@ -58,8 +66,25 @@ try {
         throw 'Pull request became draft.'
     }
 
-    if ([string] $pull.head.repo.full_name -cne $Repository) {
-        throw 'Pull request head repository no longer matches the trusted repository.'
+    if ([string] $pull.head.repo.full_name -cne $Repository -or
+        [string] $pull.base.repo.full_name -cne $Repository) {
+        throw 'Pull request repositories no longer match the trusted repository.'
+    }
+
+    $headRepositoryId = [long] $pull.head.repo.id
+    $baseRepositoryId = [long] $pull.base.repo.id
+    if ($headRepositoryId -le 0 -or
+        $baseRepositoryId -le 0 -or
+        $headRepositoryId -ne $baseRepositoryId) {
+        throw 'Pull request head/base repository identity no longer matches.'
+    }
+
+    if ([string] $pull.base.ref -cne $ExpectedBaseRef) {
+        throw 'Pull request base branch no longer matches the expected trusted base.'
+    }
+
+    if ([string] $pull.base.sha -cne $ExpectedBaseSha) {
+        throw "Pull request base moved from expected SHA $ExpectedBaseSha."
     }
 
     if ([string] $pull.head.sha -cne $ExpectedHeadSha) {
@@ -68,7 +93,10 @@ try {
 
     [pscustomobject][ordered]@{
         Repository = $Repository
+        RepositoryId = $baseRepositoryId
         PrNumber = $PrNumber
+        BaseRef = $ExpectedBaseRef
+        BaseSha = $ExpectedBaseSha
         HeadSha = $ExpectedHeadSha
         Open = $true
         Draft = $false
