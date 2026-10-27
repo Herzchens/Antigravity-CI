@@ -69,3 +69,10 @@ Assert-Contains -Needle 'scheduled_task_create_succeeded' -Name 'Task Scheduler 
 Assert-Contains -Needle 'schtasks.exe /Query /TN $taskName' -Name 'host verifies no sandbox task registration persisted'
 Assert-Contains -Needle 'ScheduledTaskRegistrationBlocked = $true' -Name 'Task Scheduler isolation is an explicit acceptance invariant'
 Assert-Contains -Needle 'schtasks.exe /Delete /TN $cleanupTaskName' -Name 'Task Scheduler sentinels are deleted during cleanup'
+
+Assert-Contains -Needle 'CurrentVersion\Run' -Name 'sandbox smoke probes per-user Run-key persistence'
+Assert-Contains -Needle 'Antigravity-CI-Sandbox-Control-' -Name 'host control fixture proves persistence primitives are available outside sandbox'
+Assert-Contains -Needle 'registry_probe_completed' -Name 'registry persistence probe must execute before acceptance'
+Assert-Contains -Needle 'registry_write_succeeded' -Name 'registry write outcome is asserted'
+Assert-Contains -Needle 'RegistryRunPersistenceBlocked = $true' -Name 'HKCU Run isolation is an explicit acceptance invariant'
+Assert-Contains -Needle 'DeleteValue($runValueName, $false)' -Name 'registry persistence sentinel is deleted during cleanup'
