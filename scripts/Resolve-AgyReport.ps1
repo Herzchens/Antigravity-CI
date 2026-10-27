@@ -149,4 +149,15 @@ catch {
     throw 'AGY report generated_at is not a valid RFC 3339 timestamp.'
 }
 
+if ([string] $report.result -ceq 'passed') {
+    $failedTests = @(
+        @($report.tests) |
+        Where-Object { [string] $_.status -ceq 'failed' }
+    )
+
+    if ($failedTests.Count -gt 0) {
+        throw 'AGY report result is contradictory: a passed review cannot contain failed tests.'
+    }
+}
+
 $report
