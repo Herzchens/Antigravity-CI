@@ -141,6 +141,10 @@ echo --sandbox
 echo --disable-slash-commands
 exit /b 0
 "@ | Set-Content -LiteralPath $fakeAgy -Encoding ascii
+    $fakeAgyBytes = [System.IO.File]::ReadAllBytes($fakeAgy)
+    $fakeAgySha256 = (
+        Get-FileHash -LiteralPath $fakeAgy -Algorithm SHA256 -ErrorAction Stop
+    ).Hash.ToLowerInvariant()
 
     $env:PATH = "$fakeBin;$oldPath"
     $env:GIT_CONFIG_GLOBAL = $globalConfig
@@ -183,6 +187,7 @@ exit /b 2
         Role = 'Review'
         TrustedPublicKey = "$keyPath.pub"
         AgyExecutable = $fakeAgy
+        ExpectedAgySha256 = $fakeAgySha256
         HomeDirectory = $fakeHome
         ProtectedReadProbeManifest = $probeManifest
         MinimumWindowsBuild = 1
@@ -198,6 +203,14 @@ exit /b 2
     }
 
     Write-Host '[PASS] isolated review account fixture passes with public key only'
+
+    Add-Content -LiteralPath $fakeAgy -Value 'rem tampered' -Encoding ascii
+    Assert-Throws -Name 'review role rejects a modified Antigravity executable' -Action {
+        & $preflight @reviewParameters
+    }
+    [System.IO.File]::WriteAllBytes($fakeAgy, $fakeAgyBytes)
+
+    Write-Host '[PASS] review role pins the Antigravity executable SHA-256 before execution'
 
     & git config --file $globalConfig filter.evil.smudge 'cmd.exe /c exit 0'
     Assert-Throws -Name 'runner preflight rejects injected global Git filter drivers' -Action {

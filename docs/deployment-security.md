@@ -8,6 +8,17 @@ Every privileged job first replaces system/global Git configuration with a fresh
 
 The signing runner owns the only private signing key. Keep the private key on the machine and load it through the Windows OpenSSH agent; do not place the private key or its passphrase in GitHub secrets. The workflow receives only the public-key path plus a dedicated branch-update credential. The write credential is scoped to the signing step and is not persisted by checkout.
 
+## Antigravity runtime pinning
+
+Treat the Antigravity CLI executable as privileged review infrastructure, not as reviewed code. After every deliberate install or upgrade, resolve and record the exact executable SHA-256:
+
+```powershell
+$agyPath = (Get-Command agy -CommandType Application -ErrorAction Stop).Source
+(Get-FileHash -LiteralPath $agyPath -Algorithm SHA256).Hash.ToLowerInvariant()
+```
+
+Pass that 64-character hash as `AgySha256` when generating the caller workflow. Runner preflight verifies the executable hash before the first `agy` invocation, the review wrapper verifies it again before and after the review process, and the sandbox smoke test does the same. CI invocations set `AGY_CLI_DISABLE_AUTO_UPDATE=true`; upgrades must therefore be deliberate and followed by an explicit re-pin. Prefer an administrator-managed, non-user-writable installation path when deployment policy permits it.
+
 ## Review runner
 
 The review runner receives only a public copy of the trusted signing key. It must not have access to the signing account, SSH agent, publisher credential, or GitHub write credentials. Production deployments should prefer an ephemeral self-hosted review runner so one job receives a clean machine state. GitHub explicitly warns that persistent self-hosted runners can be persistently compromised by untrusted workflow code and recommends ephemeral runners for autoscaling.
@@ -26,7 +37,9 @@ The privileged caller uses `pull_request_target` deliberately so GitHub loads th
 
 Use an exact 40-character Antigravity-CI commit SHA in every caller workflow. Do not call a branch or moving tag. The project configuration in `.agy/project.toml` is a privileged policy input; review preparation reads it from the trusted base commit, never from the pull-request head.
 
-Generate an initial caller with `scripts/New-AntigravityCaller.ps1` and an initial project config with `scripts/New-ProjectConfig.ps1`. Review the generated files before committing them to a target repository.
+Generate an initial caller with `scripts/New-AntigravityCaller.ps1` and provide the pinned `-AgySha256` value from the installed review-runner binary. Generate the initial project config with `scripts/New-ProjectConfig.ps1`. Review the generated files before committing them to a target repository.
+
+The real sandbox acceptance probe is intentionally setup-time/manual. Run `scripts/Test-AgySandboxSmoke.ps1 -ExpectedAgySha256 <pinned-hash>` under the dedicated review account after installing or upgrading AGY and after materially changing Windows sandbox policy.
 
 The reusable workflow rejects forks, draft pull requests, non-default target branches, repository-ID mismatches, and unapproved pull-request actions before allocating the signing runner. The same checks are repeated inside trusted PowerShell code.
 

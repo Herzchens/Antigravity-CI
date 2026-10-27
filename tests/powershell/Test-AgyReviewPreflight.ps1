@@ -239,9 +239,25 @@ $report = [ordered]@{
 pwsh -NoProfile -File "$fakeScript"
 "@ | Set-Content -LiteralPath $fakeCommand -Encoding ascii
 
+        $fakeCommandSha256 = (
+            Get-FileHash -LiteralPath $fakeCommand -Algorithm SHA256 -ErrorAction Stop
+        ).Hash.ToLowerInvariant()
+
         $mutatingParameters = $baseParameters.Clone()
         $mutatingParameters.AgyExecutable = $fakeCommand
+        $mutatingParameters.ExpectedAgySha256 = $fakeCommandSha256
         $mutatingParameters.OutputPath = $mutatingOutput
+
+        $wrongHashParameters = $mutatingParameters.Clone()
+        $wrongHashParameters.ExpectedAgySha256 = ('0' * 64)
+
+        Assert-Throws -Name 'AGY executable hash mismatch is rejected before execution' -Action {
+            & $runner @wrongHashParameters
+        }
+
+        if (Test-Path -LiteralPath (Join-Path $targetRepo '.git\hooks\pre-commit')) {
+            throw 'Hash-mismatched AGY executable ran before integrity rejection.'
+        }
 
         $sensitiveNames = @(
             'AGY_REPORTER_TOKEN', 'GITHUB_TOKEN', 'SSH_AUTH_SOCK',
@@ -276,6 +292,7 @@ pwsh -NoProfile -File "$fakeScript"
 
         Remove-Item -LiteralPath (Join-Path $targetRepo '.git\hooks\pre-commit') -Force -ErrorAction SilentlyContinue
 
+        Write-Host '[PASS] AGY executable hash is verified before process start'
         Write-Host '[PASS] sensitive runner environment is stripped from AGY'
         Write-Host '[PASS] Git control-plane mutation prevents final report publication'
 
@@ -327,6 +344,9 @@ pwsh -NoProfile -File "$hostMutationScript"
 
         $hostMutationParameters = $baseParameters.Clone()
         $hostMutationParameters.AgyExecutable = $hostMutationCommand
+        $hostMutationParameters.ExpectedAgySha256 = (
+            Get-FileHash -LiteralPath $hostMutationCommand -Algorithm SHA256 -ErrorAction Stop
+        ).Hash.ToLowerInvariant()
         $hostMutationParameters.OutputPath = $hostMutationOutput
 
         Assert-Throws -Name 'Antigravity project-settings persistence invalidates the run' -Action {
@@ -357,6 +377,9 @@ pwsh -NoProfile -File "$floodScript"
 
         $floodParameters = $baseParameters.Clone()
         $floodParameters.AgyExecutable = $floodCommand
+        $floodParameters.ExpectedAgySha256 = (
+            Get-FileHash -LiteralPath $floodCommand -Algorithm SHA256 -ErrorAction Stop
+        ).Hash.ToLowerInvariant()
         $floodParameters.OutputPath = $floodOutput
         $floodParameters.MaxStdoutBytes = 4096
 

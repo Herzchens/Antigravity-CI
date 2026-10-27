@@ -37,6 +37,10 @@ param(
     [ValidateLength(1, 128)]
     [string] $ExpectedReporterLogin,
 
+    [Parameter(Mandatory)]
+    [ValidatePattern('^[0-9a-fA-F]{64}$')]
+    [string] $AgySha256,
+
     [switch] $Force
 )
 
@@ -91,6 +95,7 @@ $template = Get-Content -LiteralPath $templatePath -Raw -Encoding utf8
 $signingPath = ConvertTo-YamlSingleQuotedValue -Value $SigningPublicKeyPath -Name 'SigningPublicKeyPath'
 $reviewPath = ConvertTo-YamlSingleQuotedValue -Value $ReviewPublicKeyPath -Name 'ReviewPublicKeyPath'
 $reporterLogin = ConvertTo-YamlSingleQuotedValue -Value $ExpectedReporterLogin -Name 'ExpectedReporterLogin'
+$agySha256 = $AgySha256.ToLowerInvariant()
 
 $replacements = [ordered]@{
     'REPLACE_WITH_INFRASTRUCTURE_REPOSITORY' = $InfrastructureRepository
@@ -101,6 +106,7 @@ $replacements = [ordered]@{
     'REPLACE_WITH_SIGNING_PUBLIC_KEY_PATH' = $signingPath
     'REPLACE_WITH_REVIEW_PUBLIC_KEY_PATH' = $reviewPath
     'REPLACE_WITH_REPORTER_LOGIN' = $reporterLogin
+    'REPLACE_WITH_AGY_SHA256' = $agySha256
 }
 
 $rendered = $template
@@ -141,4 +147,5 @@ New-Item -ItemType Directory -Path $parent -Force -ErrorAction Stop | Out-Null
     SigningRunnerLabel = $SigningRunnerLabel
     ReviewRunnerLabel = $ReviewRunnerLabel
     PublisherRunnerLabel = $PublisherRunnerLabel
+    AgySha256 = $agySha256
 }

@@ -25,6 +25,7 @@ jobs:
       expected_reporter_login: 'REPLACE_WITH_REPORTER_LOGIN'
       reporter_app_client_id: ${{ vars.ANTIGRAVITY_REPORTER_APP_CLIENT_ID }}
       agy_executable: agy
+      agy_sha256: 'REPLACE_WITH_AGY_SHA256'
       print_timeout_seconds: 1200
       allow_adb: false
       allow_network: false

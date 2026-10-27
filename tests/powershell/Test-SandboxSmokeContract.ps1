@@ -37,6 +37,10 @@ function Assert-NotContains {
     Write-Host "[PASS] $Name"
 }
 
+Assert-Contains -Needle 'ExpectedAgySha256' -Name 'sandbox smoke pins the AGY executable SHA-256'
+Assert-Contains -Needle 'Get-FileHash -LiteralPath $agyPath -Algorithm SHA256' -Name 'sandbox smoke hashes the AGY executable before and after execution'
+Assert-Contains -Needle "AGY_CLI_DISABLE_AUTO_UPDATE'] = 'true'" -Name 'sandbox smoke disables AGY self-update'
+Assert-Contains -Needle 'Antigravity CLI changed during the sandbox smoke test.' -Name 'sandbox smoke rejects runtime binary mutation'
 Assert-Contains -Needle "'--sandbox'" -Name 'sandbox mode is forced'
 Assert-Contains -Needle "'--disable-slash-commands'" -Name 'slash command expansion is disabled'
 Assert-NotContains -Needle '--dangerously-skip-permissions' -Name 'permission bypass is forbidden'

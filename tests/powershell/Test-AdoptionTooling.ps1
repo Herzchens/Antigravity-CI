@@ -49,6 +49,7 @@ try {
         SigningPublicKeyPath = "C:\Users\Owner's Key\signing.pub"
         ReviewPublicKeyPath = 'C:\ProgramData\Antigravity-CI\trusted.pub'
         ExpectedReporterLogin = 'Example-AGY[bot]'
+        AgySha256 = ('b' * 64)
     }
 
     $caller = & $callerGenerator @callerParameters
@@ -78,9 +79,14 @@ try {
         throw 'Generated caller workflow must not use a PR-controlled pull_request entrypoint.'
     }
 
+    if ($callerText -notmatch "agy_sha256: 'b{64}'") {
+        throw 'Generated caller workflow does not pin the expected AGY executable SHA-256.'
+    }
+
     Write-Host '[PASS] caller generator renders an exact-SHA reusable workflow reference'
     Write-Host '[PASS] caller generator safely quotes Windows key paths'
     Write-Host '[PASS] caller generator uses the trusted default-branch PR event'
+    Write-Host '[PASS] caller generator pins the AGY executable SHA-256'
 
     Assert-Throws -Name 'caller generator refuses overwrite without Force' -Action {
         & $callerGenerator @callerParameters

@@ -235,4 +235,16 @@ Write-Host '[PASS] every privileged runner preflight requires Git isolation'
 
 Assert-Contains -Text $signJobText -Needle '-SigningKey $env:TRUSTED_PUBLIC_KEY_PATH' -Name 'signing key selection is explicit and independent of ambient Git config'
 
+Assert-Contains -Text $caller -Needle "agy_sha256: 'REPLACE_WITH_AGY_SHA256'" -Name 'caller template requires a pinned AGY executable hash'
+Assert-Contains -Text $workflow -Needle '      agy_sha256:' -Name 'reusable workflow requires the AGY executable hash input'
+
+$agyHashBindings = [regex]::Matches(
+    $workflow,
+    '-ExpectedAgySha256 \$env:AGY_SHA256'
+).Count
+if ($agyHashBindings -ne 2) {
+    throw "Expected AGY SHA-256 pin at review preflight and execution; found $agyHashBindings."
+}
+Write-Host '[PASS] AGY binary hash is enforced before preflight execution and review execution'
+
 Write-Host '[PASS] workflow contract is internally consistent'

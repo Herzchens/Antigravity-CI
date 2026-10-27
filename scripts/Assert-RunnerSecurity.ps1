@@ -10,6 +10,9 @@ param(
 
     [string] $AgyExecutable = 'agy',
 
+    [ValidatePattern('^[0-9a-fA-F]{64}$')]
+    [string] $ExpectedAgySha256,
+
     [string] $ForbiddenIdentity,
 
     [string[]] $ForbiddenIdentities = @(),
@@ -396,13 +399,48 @@ $filesystemBoundaryResult = & $filesystemBoundary `
     -ManifestPath $ProtectedReadProbeManifest `
     -HomeDirectory $resolvedHomeDirectory
 
+if ([string]::IsNullOrWhiteSpace($ExpectedAgySha256)) {
+    throw 'Review runner security preflight requires ExpectedAgySha256.'
+}
+
+$expectedAgyHash = $ExpectedAgySha256.ToLowerInvariant()
 $agyCommand = Get-Command $AgyExecutable -CommandType Application -ErrorAction Stop |
     Select-Object -First 1
 $agyPath = [System.IO.Path]::GetFullPath($agyCommand.Source)
 
-$helpOutput = @(& $agyPath --help 2>&1)
-if ($LASTEXITCODE -ne 0) {
+$agyHashBeforeHelp = (
+    Get-FileHash -LiteralPath $agyPath -Algorithm SHA256 -ErrorAction Stop
+).Hash.ToLowerInvariant()
+
+if ($agyHashBeforeHelp -cne $expectedAgyHash) {
+    throw "Antigravity CLI SHA-256 '$agyHashBeforeHelp' does not match the expected pinned hash."
+}
+
+$previousAutoUpdate = [Environment]::GetEnvironmentVariable('AGY_CLI_DISABLE_AUTO_UPDATE')
+try {
+    $env:AGY_CLI_DISABLE_AUTO_UPDATE = 'true'
+    $helpOutput = @(& $agyPath --help 2>&1)
+    $helpExitCode = $LASTEXITCODE
+}
+finally {
+    if ($null -eq $previousAutoUpdate) {
+        Remove-Item Env:AGY_CLI_DISABLE_AUTO_UPDATE -ErrorAction SilentlyContinue
+    }
+    else {
+        $env:AGY_CLI_DISABLE_AUTO_UPDATE = $previousAutoUpdate
+    }
+}
+
+if ($helpExitCode -ne 0) {
     throw 'Antigravity CLI --help failed on the review runner.'
+}
+
+$agyHashAfterHelp = (
+    Get-FileHash -LiteralPath $agyPath -Algorithm SHA256 -ErrorAction Stop
+).Hash.ToLowerInvariant()
+
+if ($agyHashAfterHelp -cne $expectedAgyHash) {
+    throw 'Antigravity CLI changed while running the security preflight.'
 }
 
 $helpText = $helpOutput -join [Environment]::NewLine
@@ -424,6 +462,7 @@ foreach ($requiredFlag in @(
     User = [Environment]::UserName
     Identity = $runnerIdentity
     AgyPath = $agyPath
+    AgySha256 = $agyHashAfterHelp
     TrustedKeyFingerprint = $trustedFingerprint
     SshAgentIdentityCount = $agentKeys.Count
     AgySettingsSha256 = $hostPolicyResult.SettingsSha256
