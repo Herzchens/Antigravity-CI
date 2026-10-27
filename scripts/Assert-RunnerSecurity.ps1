@@ -20,6 +20,8 @@ param(
 
     [string] $ProtectedReadProbeManifest,
 
+    [switch] $RequireGitIsolation,
+
     [ValidateRange(1, 99999)]
     [int] $MinimumWindowsBuild = 26100
 )
@@ -37,6 +39,139 @@ function Invoke-GitConfig {
     [pscustomobject]@{
         ExitCode = $LASTEXITCODE
         Output = $output
+    }
+}
+
+function Assert-GitIsolation {
+    $globalConfig = [Environment]::GetEnvironmentVariable('GIT_CONFIG_GLOBAL')
+    $noSystem = [Environment]::GetEnvironmentVariable('GIT_CONFIG_NOSYSTEM')
+    $configCount = [Environment]::GetEnvironmentVariable('GIT_CONFIG_COUNT')
+    $configParameters = [Environment]::GetEnvironmentVariable('GIT_CONFIG_PARAMETERS')
+    $attrNoSystem = [Environment]::GetEnvironmentVariable('GIT_ATTR_NOSYSTEM')
+    $templateDirectory = [Environment]::GetEnvironmentVariable('GIT_TEMPLATE_DIR')
+    $isolationRoot = [Environment]::GetEnvironmentVariable('ANTIGRAVITY_GIT_ISOLATION_ROOT')
+
+    if ($noSystem -cne '1') {
+        throw 'Git isolation requires GIT_CONFIG_NOSYSTEM=1.'
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($configCount) -and $configCount -cne '0') {
+        throw 'Git isolation requires GIT_CONFIG_COUNT=0 before privileged work.'
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($configParameters)) {
+        throw 'Git isolation requires GIT_CONFIG_PARAMETERS to be empty.'
+    }
+
+    if ($attrNoSystem -cne '1') {
+        throw 'Git isolation requires GIT_ATTR_NOSYSTEM=1.'
+    }
+
+    if ([string]::IsNullOrWhiteSpace($isolationRoot) -or
+        -not (Test-Path -LiteralPath $isolationRoot -PathType Container)) {
+        throw 'Git isolation root is missing.'
+    }
+
+    $root = [System.IO.Path]::GetFullPath($isolationRoot)
+
+    function Assert-WithinIsolationRoot {
+        param(
+            [Parameter(Mandatory)]
+            [string] $Path,
+
+            [Parameter(Mandatory)]
+            [string] $Name
+        )
+
+        $full = [System.IO.Path]::GetFullPath($Path)
+        $relative = [System.IO.Path]::GetRelativePath($root, $full)
+
+        if ($relative -eq '.' -or
+            [System.IO.Path]::IsPathRooted($relative) -or
+            $relative -eq '..' -or
+            $relative.StartsWith('..' + [System.IO.Path]::DirectorySeparatorChar, [StringComparison]::Ordinal)) {
+            throw "$Name must be a child of the Git isolation root."
+        }
+
+        $full
+    }
+
+    if ([string]::IsNullOrWhiteSpace($globalConfig) -or
+        -not (Test-Path -LiteralPath $globalConfig -PathType Leaf)) {
+        throw 'Git isolation requires an explicit global configuration file.'
+    }
+
+    $globalConfigPath = Assert-WithinIsolationRoot -Path $globalConfig -Name 'GIT_CONFIG_GLOBAL'
+
+    if ([string]::IsNullOrWhiteSpace($templateDirectory) -or
+        -not (Test-Path -LiteralPath $templateDirectory -PathType Container)) {
+        throw 'Git isolation requires an explicit template directory.'
+    }
+
+    $templatePath = Assert-WithinIsolationRoot -Path $templateDirectory -Name 'GIT_TEMPLATE_DIR'
+    if (@(Get-ChildItem -LiteralPath $templatePath -Force -ErrorAction Stop).Count -ne 0) {
+        throw 'Git isolation template directory must be empty.'
+    }
+
+    $allowedNames = [System.Collections.Generic.HashSet[string]]::new(
+        [System.StringComparer]::OrdinalIgnoreCase
+    )
+    foreach ($name in @('core.hookspath', 'core.attributesfile', 'credential.interactive')) {
+        [void] $allowedNames.Add($name)
+    }
+
+    $configuredNames = @(& git config --global --name-only --list 2>&1)
+    if ($LASTEXITCODE -ne 0) {
+        throw 'Unable to enumerate isolated global Git configuration.'
+    }
+
+    foreach ($nameLine in $configuredNames) {
+        $name = ([string] $nameLine).Trim()
+        if ([string]::IsNullOrWhiteSpace($name)) {
+            continue
+        }
+
+        if (-not $allowedNames.Contains($name)) {
+            throw "Git isolation contains unexpected global option '$name'."
+        }
+    }
+
+    $hooks = Invoke-GitConfig -Arguments @('--global', '--get', 'core.hookspath')
+    if ($hooks.ExitCode -ne 0 -or $hooks.Output.Count -eq 0) {
+        throw 'Git isolation requires an explicit hooks path.'
+    }
+
+    $hooksPath = Assert-WithinIsolationRoot -Path ([string] ($hooks.Output | Select-Object -First 1)) -Name 'core.hooksPath'
+    if (-not (Test-Path -LiteralPath $hooksPath -PathType Container) -or
+        @(Get-ChildItem -LiteralPath $hooksPath -Force -ErrorAction Stop).Count -ne 0) {
+        throw 'Git isolation hooks directory must exist and be empty.'
+    }
+
+    $attributes = Invoke-GitConfig -Arguments @('--global', '--get', 'core.attributesfile')
+    if ($attributes.ExitCode -ne 0 -or $attributes.Output.Count -eq 0) {
+        throw 'Git isolation requires an explicit attributes file.'
+    }
+
+    $attributesPath = Assert-WithinIsolationRoot -Path ([string] ($attributes.Output | Select-Object -First 1)) -Name 'core.attributesFile'
+    if (-not (Test-Path -LiteralPath $attributesPath -PathType Leaf) -or
+        (Get-Item -LiteralPath $attributesPath -ErrorAction Stop).Length -ne 0) {
+        throw 'Git isolation attributes file must exist and be empty.'
+    }
+
+    $interactive = Invoke-GitConfig -Arguments @('--global', '--get', 'credential.interactive')
+    if ($interactive.ExitCode -ne 0 -or
+        (($interactive.Output | Select-Object -First 1).Trim().ToLowerInvariant() -ne 'false')) {
+        throw 'Git isolation must disable interactive credential helpers.'
+    }
+
+    [pscustomobject][ordered]@{
+        Root = $root
+        GlobalConfig = $globalConfigPath
+        HooksPath = $hooksPath
+        AttributesPath = $attributesPath
+        TemplateDirectory = $templatePath
+        GitIsolationValid = ($null -ne $gitIsolation -and $gitIsolation.Valid)
+        Valid = $true
     }
 }
 
@@ -90,6 +225,11 @@ if ([Environment]::OSVersion.Version.Build -lt $MinimumWindowsBuild) {
 $null = Get-Command git -ErrorAction Stop
 $null = Get-Command ssh-keygen -ErrorAction Stop
 
+$gitIsolation = $null
+if ($RequireGitIsolation) {
+    $gitIsolation = Assert-GitIsolation
+}
+
 $trustedKey = $null
 $trustedFingerprint = $null
 
@@ -132,18 +272,6 @@ if ($forbidden.Contains($runnerIdentity)) {
 
 if ($Role -eq 'Signing') {
 
-    $format = Invoke-GitConfig -Arguments @('--global', '--get', 'gpg.format')
-    if ($format.ExitCode -ne 0 -or
-        (($format.Output | Select-Object -First 1).Trim() -cne 'ssh')) {
-        throw 'Signing runner must configure global gpg.format=ssh.'
-    }
-
-    $commitSigning = Invoke-GitConfig -Arguments @('--global', '--get', 'commit.gpgsign')
-    if ($commitSigning.ExitCode -ne 0 -or
-        (($commitSigning.Output | Select-Object -First 1).Trim().ToLowerInvariant() -ne 'true')) {
-        throw 'Signing runner must configure global commit.gpgsign=true.'
-    }
-
     $agentOutput = @(& ssh-add -L 2>&1)
     if ($LASTEXITCODE -ne 0) {
         throw 'Signing runner cannot read an SSH agent identity.'
@@ -172,6 +300,7 @@ if ($Role -eq 'Signing') {
         Identity = $runnerIdentity
         TrustedKeyFingerprint = $trustedFingerprint
         TrustedKeyLoaded = $true
+        GitIsolationValid = ($null -ne $gitIsolation -and $gitIsolation.Valid)
         Valid = $true
     }
 
@@ -236,6 +365,7 @@ if ($Role -eq 'Publisher') {
         User = [Environment]::UserName
         Identity = $runnerIdentity
         SshAgentIdentityCount = $agentKeys.Count
+        GitIsolationValid = ($null -ne $gitIsolation -and $gitIsolation.Valid)
         Valid = $true
     }
 

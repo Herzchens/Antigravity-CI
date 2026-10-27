@@ -39,7 +39,11 @@ $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) (
 )
 $fakeBin = Join-Path $tempRoot 'bin'
 $fakeHome = Join-Path $tempRoot 'review-home'
-$globalConfig = Join-Path $tempRoot 'global.gitconfig'
+$gitIsolationRoot = Join-Path $tempRoot 'git-isolation'
+$globalConfig = Join-Path $gitIsolationRoot 'global.gitconfig'
+$attributesPath = Join-Path $gitIsolationRoot 'empty.gitattributes'
+$hooksPath = Join-Path $gitIsolationRoot 'empty-hooks'
+$templatePath = Join-Path $gitIsolationRoot 'empty-template'
 $keyPath = Join-Path $tempRoot 'trusted-key'
 $fakeSshAdd = Join-Path $fakeBin 'ssh-add.cmd'
 $fakeAgy = Join-Path $fakeBin 'agy.cmd'
@@ -51,6 +55,9 @@ $fixtureIdentity = [System.Security.Principal.WindowsIdentity]::GetCurrent().Nam
 
 New-Item -ItemType Directory -Path $fakeBin -Force | Out-Null
 New-Item -ItemType Directory -Path $fakeHome -Force | Out-Null
+New-Item -ItemType Directory -Path $gitIsolationRoot -Force | Out-Null
+New-Item -ItemType Directory -Path $hooksPath -Force | Out-Null
+New-Item -ItemType Directory -Path $templatePath -Force | Out-Null
 
 $settingsDir = Join-Path $fakeHome '.gemini\antigravity-cli'
 $settingsPath = Join-Path $settingsDir 'settings.json'
@@ -93,10 +100,22 @@ foreach ($aclTarget in @(
 }
 
 $oldPath = $env:PATH
-$oldGlobalConfig = $env:GIT_CONFIG_GLOBAL
-$oldSensitive = @{}
-foreach ($name in @('GITHUB_TOKEN', 'GH_TOKEN', 'AGY_REPORTER_TOKEN', 'SSH_AUTH_SOCK', 'SSH_AGENT_PID')) {
-    $oldSensitive[$name] = [Environment]::GetEnvironmentVariable($name)
+$oldEnvironment = @{}
+foreach ($name in @(
+    'GIT_CONFIG_GLOBAL',
+    'GIT_CONFIG_NOSYSTEM',
+    'GIT_CONFIG_COUNT',
+    'GIT_CONFIG_PARAMETERS',
+    'GIT_ATTR_NOSYSTEM',
+    'GIT_TEMPLATE_DIR',
+    'ANTIGRAVITY_GIT_ISOLATION_ROOT',
+    'GITHUB_TOKEN',
+    'GH_TOKEN',
+    'AGY_REPORTER_TOKEN',
+    'SSH_AUTH_SOCK',
+    'SSH_AGENT_PID'
+)) {
+    $oldEnvironment[$name] = [Environment]::GetEnvironmentVariable($name)
 }
 
 try {
@@ -125,8 +144,14 @@ exit /b 0
 
     $env:PATH = "$fakeBin;$oldPath"
     $env:GIT_CONFIG_GLOBAL = $globalConfig
+    $env:GIT_CONFIG_NOSYSTEM = '1'
+    $env:GIT_CONFIG_COUNT = '0'
+    $env:GIT_CONFIG_PARAMETERS = ''
+    $env:GIT_ATTR_NOSYSTEM = '1'
+    $env:GIT_TEMPLATE_DIR = $templatePath
+    $env:ANTIGRAVITY_GIT_ISOLATION_ROOT = $gitIsolationRoot
 
-    foreach ($name in $oldSensitive.Keys) {
+    foreach ($name in @('GITHUB_TOKEN', 'GH_TOKEN', 'AGY_REPORTER_TOKEN', 'SSH_AUTH_SOCK', 'SSH_AGENT_PID')) {
         Remove-Item -LiteralPath "Env:$name" -ErrorAction SilentlyContinue
     }
 
@@ -141,6 +166,18 @@ exit /b 2
         '',
         [System.Text.UTF8Encoding]::new($false)
     )
+    [System.IO.File]::WriteAllText(
+        $attributesPath,
+        '',
+        [System.Text.UTF8Encoding]::new($false)
+    )
+
+    & git config --file $globalConfig core.hooksPath $hooksPath
+    & git config --file $globalConfig core.attributesFile $attributesPath
+    & git config --file $globalConfig credential.interactive false
+    if ($LASTEXITCODE -ne 0) {
+        throw 'Unable to initialize Git isolation fixture.'
+    }
 
     $reviewParameters = @{
         Role = 'Review'
@@ -149,6 +186,7 @@ exit /b 2
         HomeDirectory = $fakeHome
         ProtectedReadProbeManifest = $probeManifest
         MinimumWindowsBuild = 1
+        RequireGitIsolation = $true
     }
 
     $review = & $preflight @reviewParameters
@@ -161,12 +199,21 @@ exit /b 2
 
     Write-Host '[PASS] isolated review account fixture passes with public key only'
 
+    & git config --file $globalConfig filter.evil.smudge 'cmd.exe /c exit 0'
+    Assert-Throws -Name 'runner preflight rejects injected global Git filter drivers' -Action {
+        & $preflight @reviewParameters
+    }
+    & git config --file $globalConfig --unset-all filter.evil.smudge
+
+    Write-Host '[PASS] Git host isolation rejects execution-capable global filter configuration'
+
     $publisherParameters = @{
         Role = 'Publisher'
         AgyExecutable = 'publisher-does-not-require-agy'
         HomeDirectory = $fakeHome
         MinimumWindowsBuild = 1
         ForbiddenIdentities = @('OTHER-HOST\OtherUser')
+        RequireGitIsolation = $true
     }
 
     $publisher = & $preflight @publisherParameters
@@ -223,18 +270,12 @@ exit /b 0
         & $preflight @reviewParameters
     }
 
-    @"
-[gpg]
-    format = ssh
-[commit]
-    gpgsign = true
-"@ | Set-Content -LiteralPath $globalConfig -Encoding utf8NoBOM
-
     $signingParameters = @{
         Role = 'Signing'
         TrustedPublicKey = "$keyPath.pub"
         HomeDirectory = $fakeHome
         MinimumWindowsBuild = 1
+        RequireGitIsolation = $true
     }
 
     $signing = & $preflight @signingParameters
@@ -245,7 +286,7 @@ exit /b 0
         throw 'Signing fixture did not pass expected security checks.'
     }
 
-    Write-Host '[PASS] signing role requires the trusted key in its SSH agent'
+    Write-Host '[PASS] signing role requires the trusted key in its SSH agent without ambient signing config'
 }
 finally {
     foreach ($aclPath in @($protectedSentinel, $protectedDirectory, $probeManifest, $policyDirectory)) {
@@ -256,19 +297,12 @@ finally {
 
     $env:PATH = $oldPath
 
-    if ($null -eq $oldGlobalConfig) {
-        Remove-Item Env:GIT_CONFIG_GLOBAL -ErrorAction SilentlyContinue
-    }
-    else {
-        $env:GIT_CONFIG_GLOBAL = $oldGlobalConfig
-    }
-
-    foreach ($name in $oldSensitive.Keys) {
-        if ($null -eq $oldSensitive[$name]) {
+    foreach ($name in $oldEnvironment.Keys) {
+        if ($null -eq $oldEnvironment[$name]) {
             Remove-Item -LiteralPath "Env:$name" -ErrorAction SilentlyContinue
         }
         else {
-            Set-Item -LiteralPath "Env:$name" -Value $oldSensitive[$name]
+            Set-Item -LiteralPath "Env:$name" -Value $oldEnvironment[$name]
         }
     }
 

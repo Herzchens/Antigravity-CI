@@ -83,18 +83,7 @@ $sshKeygenCommand = Get-Command ssh-keygen -ErrorAction Stop
 $RepositoryRoot = (Resolve-Path -LiteralPath $RepositoryPath -ErrorAction Stop).Path
 $script:RepositoryRoot = $RepositoryRoot
 
-$configuredSshProgram = (Invoke-Git -Arguments @(
-    'config',
-    '--get',
-    'gpg.ssh.program'
-) -AllowFailure).Output | Select-Object -First 1
-
-$sshProgram = if ([string]::IsNullOrWhiteSpace($configuredSshProgram)) {
-    $sshKeygenCommand.Source
-}
-else {
-    $configuredSshProgram.Trim()
-}
+$sshProgram = $sshKeygenCommand.Source
 
 $resolvedCommit = (Invoke-Git -Arguments @(
     'rev-parse',
@@ -109,16 +98,6 @@ if ([string]::IsNullOrWhiteSpace($resolvedCommit)) {
 $resolvedCommit = $resolvedCommit.Trim().ToLowerInvariant()
 if ($resolvedCommit -ne $CommitSha.ToLowerInvariant()) {
     throw 'Resolved commit does not match the expected SHA.'
-}
-
-$format = (Invoke-Git -Arguments @(
-    'config',
-    '--get',
-    'gpg.format'
-)).Output | Select-Object -First 1
-
-if ([string]::IsNullOrWhiteSpace($format) -or $format.Trim() -ne 'ssh') {
-    throw 'Git gpg.format must be ssh on the signing runner.'
 }
 
 if ([string]::IsNullOrWhiteSpace($SigningKey)) {

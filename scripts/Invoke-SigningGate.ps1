@@ -20,6 +20,8 @@ param(
 
     [string] $TrustedPublicKey,
 
+    [string] $SigningKey,
+
     [ValidatePattern('^[A-Za-z0-9@._+-]+$')]
     [string] $Principal = 'antigravity-ci',
 
@@ -379,6 +381,8 @@ function New-SignedCommit {
             'gpg.format=ssh',
             '-c',
             "gpg.ssh.program=$script:SshKeygenProgram",
+            '-c',
+            "user.signingkey=$script:SigningKey",
             'commit-tree',
             $Record.Tree,
             '-p',
@@ -432,18 +436,26 @@ $RepositoryRoot = (Resolve-Path -LiteralPath $RepositoryPath -ErrorAction Stop).
 $script:RepositoryRoot = $RepositoryRoot
 $script:VerificationScript = Join-Path $PSScriptRoot 'Test-CommitSignature.ps1'
 
-$configuredSshProgram = (Invoke-Git -Arguments @(
-    'config',
-    '--get',
-    'gpg.ssh.program'
-) -AllowFailure).Output | Select-Object -First 1
+$script:SshKeygenProgram = $sshKeygenCommand.Source
 
-$script:SshKeygenProgram = if ([string]::IsNullOrWhiteSpace($configuredSshProgram)) {
-    $sshKeygenCommand.Source
+if ([string]::IsNullOrWhiteSpace($SigningKey)) {
+    if (-not [string]::IsNullOrWhiteSpace($TrustedPublicKey)) {
+        $SigningKey = $TrustedPublicKey
+    }
+    else {
+        $SigningKey = (Invoke-Git -Arguments @(
+            'config',
+            '--get',
+            'user.signingkey'
+        ) -AllowFailure).Output | Select-Object -First 1
+    }
 }
-else {
-    $configuredSshProgram.Trim()
+
+if ([string]::IsNullOrWhiteSpace($SigningKey)) {
+    throw 'SigningKey or TrustedPublicKey is required for deterministic SSH signing.'
 }
+
+$script:SigningKey = $SigningKey.Trim()
 
 if (-not (Test-Path -LiteralPath $script:VerificationScript -PathType Leaf)) {
     throw 'Test-CommitSignature.ps1 is required next to the signing gate.'

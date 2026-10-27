@@ -113,6 +113,7 @@ try {
         HeadSha = $originalHead
         BranchName = 'feature'
         TrustedPublicKey = "$signingKey.pub"
+        SigningKey = $signingKey
         ExpectedRemoteHead = $originalHead
         Push = $true
     }
@@ -260,6 +261,7 @@ try {
         HeadSha = $staleCandidate
         BranchName = 'feature'
         TrustedPublicKey = "$signingKey.pub"
+        SigningKey = $signingKey
         ExpectedRemoteHead = $staleCandidate
         Push = $true
     }
@@ -315,6 +317,7 @@ try {
         HeadSha = $unsupportedHeaderSha
         BranchName = 'metadata-fixture'
         TrustedPublicKey = "$signingKey.pub"
+        SigningKey = $signingKey
     }
 
     $unsupportedHeaderRejected = $false
@@ -368,6 +371,7 @@ try {
         HeadSha = $duplicateAuthorSha
         BranchName = 'duplicate-author-fixture'
         TrustedPublicKey = "$signingKey.pub"
+        SigningKey = $signingKey
     }
 
     $duplicateAuthorRejected = $false
