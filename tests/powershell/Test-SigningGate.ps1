@@ -333,11 +333,65 @@ try {
         throw 'Expected signing rewrite with an unsupported commit header to fail closed.'
     }
 
+    $duplicateAuthorPath = Join-Path $tempRoot 'duplicate-author.commit'
+    $duplicateAuthorCommit = @(
+        "tree $baseTree",
+        "parent $baseSha",
+        'author First Author <first@example.invalid> 1700000000 +0000',
+        'author Second Author <second@example.invalid> 1700000001 +0000',
+        'committer Metadata Fixture <fixture@example.invalid> 1700000002 +0000',
+        '',
+        'duplicate author fixture'
+    ) -join [char] 10
+
+    [System.IO.File]::WriteAllText(
+        $duplicateAuthorPath,
+        $duplicateAuthorCommit,
+        [System.Text.UTF8Encoding]::new($false)
+    )
+
+    $duplicateAuthorSha = (
+        Invoke-Checked -FilePath 'git' -Arguments @(
+            'hash-object',
+            '-t',
+            'commit',
+            '-w',
+            '--literally',
+            $duplicateAuthorPath
+        ) -WorkingDirectory $workRepo |
+        Select-Object -First 1
+    ).Trim()
+
+    $duplicateAuthorParameters = @{
+        RepositoryPath = $workRepo
+        BaseSha = $baseSha
+        HeadSha = $duplicateAuthorSha
+        BranchName = 'duplicate-author-fixture'
+        TrustedPublicKey = "$signingKey.pub"
+    }
+
+    $duplicateAuthorRejected = $false
+    try {
+        & $gateScript @duplicateAuthorParameters | Out-Null
+    }
+    catch {
+        if ($_.Exception.Message -notlike "*exactly one 'author' header*") {
+            throw
+        }
+
+        $duplicateAuthorRejected = $true
+    }
+
+    if (-not $duplicateAuthorRejected) {
+        throw 'Expected duplicate author metadata to be rejected before signing rewrite.'
+    }
+
     Write-Host '[PASS] preserve mode keeps commit count and commit subjects'
     Write-Host '[PASS] final tree is unchanged'
     Write-Host '[PASS] every rewritten commit verifies with the trusted SSH key'
     Write-Host '[PASS] real remote-head race is rejected before lease-protected update'
     Write-Host '[PASS] unsupported commit headers are rejected instead of being lost during rewrite'
+    Write-Host '[PASS] duplicate required commit headers are rejected instead of being collapsed during rewrite'
 }
 finally {
     if (Test-Path -LiteralPath $tempRoot) {

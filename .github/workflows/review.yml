@@ -59,7 +59,7 @@ on:
         type: boolean
     secrets:
       signing_push_token:
-        description: Dedicated write credential used only to update the signed PR branch. Must trigger pull_request synchronize events.
+        description: Dedicated write credential used only to update the signed PR branch. Must trigger pull_request_target synchronize events.
         required: true
       reporter_app_private_key:
         description: Optional GitHub App private key used only by the isolated publisher job.
@@ -81,7 +81,7 @@ concurrency:
 jobs:
   sign:
     if: >-
-      github.event_name == 'pull_request' &&
+      github.event_name == 'pull_request_target' &&
       contains(fromJSON('["opened","reopened","synchronize","ready_for_review"]'), github.event.action) &&
       github.event.pull_request.draft == false &&
       github.event.pull_request.base.ref == github.event.repository.default_branch &&
@@ -111,14 +111,6 @@ jobs:
             }
           }
 
-      - name: Checkout exact PR head for signing
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          ref: ${{ github.event.pull_request.head.sha }}
-          fetch-depth: 0
-          persist-credentials: false
-          token: ${{ github.token }}
-          path: target
 
       - name: Checkout trusted Antigravity-CI implementation
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -127,8 +119,10 @@ jobs:
           ref: ${{ job.workflow_sha }}
           fetch-depth: 1
           persist-credentials: false
+          set-safe-directory: false
           token: ${{ secrets.infrastructure_read_token != '' && secrets.infrastructure_read_token || github.token }}
           path: infrastructure
+
 
       - name: Verify signing runner security boundary
         id: signing_security
@@ -143,6 +137,20 @@ jobs:
 
           Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "runner_identity=$($security.Identity)" -Encoding utf8
           Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "trusted_fingerprint=$($security.TrustedKeyFingerprint)" -Encoding utf8
+
+
+      - name: Checkout exact PR head for signing
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+          set-safe-directory: false
+          token: ${{ github.token }}
+          path: target
+          lfs: false
+          submodules: false
+
 
       - name: Validate PR context and sign exact feature history
         id: sign
@@ -159,7 +167,7 @@ jobs:
 
           $context = & (Join-Path $env:INFRA_PATH 'scripts\Resolve-PullRequestContext.ps1') `
             -EventPath $env:GITHUB_EVENT_PATH `
-            -EventName 'pull_request' `
+            -EventName 'pull_request_target' `
             -ExpectedRepository $env:TARGET_REPOSITORY `
             -ExpectedBaseRef $env:EXPECTED_BASE_REF
 
@@ -224,12 +232,14 @@ jobs:
             throw 'Signing gate rewrote history without updating the PR branch.'
           }
 
+
       - name: Explain signing synchronization barrier
         if: steps.sign.outputs.rewritten == 'true'
         shell: pwsh
         run: |
           Write-Host 'Signed history was pushed. This run stops before AGY review.'
-          Write-Host 'The credential used for the push must produce a fresh pull_request synchronize run for the signed head.'
+          Write-Host 'The credential used for the push must produce a fresh pull_request_target synchronize run for the signed head.'
+
 
       - name: Dispose signing workspace
         if: always()
@@ -290,13 +300,6 @@ jobs:
             }
           }
 
-      - name: Checkout exact signed PR head without credentials
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          ref: ${{ github.event.pull_request.head.sha }}
-          fetch-depth: 0
-          persist-credentials: false
-          path: target
 
       - name: Checkout trusted Antigravity-CI implementation
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -305,8 +308,10 @@ jobs:
           ref: ${{ job.workflow_sha }}
           fetch-depth: 1
           persist-credentials: false
+          set-safe-directory: false
           token: ${{ secrets.infrastructure_read_token != '' && secrets.infrastructure_read_token || github.token }}
           path: infrastructure
+
 
       - name: Verify isolated review runner security boundary
         id: review_security
@@ -327,6 +332,19 @@ jobs:
 
           Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "runner_identity=$($security.Identity)" -Encoding utf8
 
+
+      - name: Checkout exact signed PR head without credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+          set-safe-directory: false
+          path: target
+          lfs: false
+          submodules: false
+
+
       - name: Revalidate exact PR head
         shell: pwsh
         env:
@@ -344,6 +362,7 @@ jobs:
             -ExpectedHeadSha $env:TARGET_HEAD `
             -ExpectedBaseSha $env:TARGET_BASE `
             -ExpectedBaseRef $env:TARGET_BASE_REF | Out-Null
+
 
       - name: Prepare trusted exact-head review
         shell: pwsh
@@ -371,6 +390,7 @@ jobs:
             -TrustedPublicKey $env:TRUSTED_PUBLIC_KEY_PATH `
             -OutputDirectory $stateRoot | Out-Null
 
+
       - name: Enforce capability ceiling and runtime readiness
         shell: pwsh
         env:
@@ -389,6 +409,7 @@ jobs:
           }
 
           & (Join-Path $env:INFRA_PATH 'scripts\Test-ProjectCapabilities.ps1') @capabilityParameters | Out-Null
+
 
       - name: Run isolated Antigravity review
         shell: pwsh
@@ -417,6 +438,7 @@ jobs:
             -AgyExecutable $env:AGY_EXECUTABLE `
             -PrintTimeoutSeconds ([int] $env:AGY_PRINT_TIMEOUT) | Out-Null
 
+
       - name: Hash validated report
         id: report_digest
         shell: pwsh
@@ -430,6 +452,7 @@ jobs:
 
           Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "sha256=$hash" -Encoding utf8
 
+
       - name: Upload validated report for isolated publisher
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
@@ -438,6 +461,7 @@ jobs:
           if-no-files-found: error
           retention-days: 1
           compression-level: 0
+
 
       - name: Dispose reviewed workspace and review state
         if: always()
@@ -508,6 +532,7 @@ jobs:
           ref: ${{ job.workflow_sha }}
           fetch-depth: 1
           persist-credentials: false
+          set-safe-directory: false
           token: ${{ secrets.infrastructure_read_token != '' && secrets.infrastructure_read_token || github.token }}
           path: infrastructure
 

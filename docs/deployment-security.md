@@ -20,6 +20,8 @@ The fallback reporter token exists for initial deployments only. Do not reuse th
 
 ## Repository integration
 
+The privileged caller uses `pull_request_target` deliberately so GitHub loads the caller workflow from the trusted base/default branch instead of from the pull-request merge ref. The caller must reject forks, drafts, non-default target branches, and repository-ID mismatches before invoking the reusable workflow. The reusable workflow independently requires the same event and repeats those checks before allocating a self-hosted runner. Never replace this entrypoint with a PR-controlled `pull_request` workflow that receives Antigravity-CI secrets or self-hosted runner labels.
+
 Use an exact 40-character Antigravity-CI commit SHA in every caller workflow. Do not call a branch or moving tag. The project configuration in `.agy/project.toml` is a privileged policy input; review preparation reads it from the trusted base commit, never from the pull-request head.
 
 Generate an initial caller with `scripts/New-AntigravityCaller.ps1` and an initial project config with `scripts/New-ProjectConfig.ps1`. Review the generated files before committing them to a target repository.
