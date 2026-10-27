@@ -67,9 +67,22 @@ $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) (
 )
 $targetRepo = Join-Path $tempRoot 'target'
 $outside = Join-Path $tempRoot 'outside'
+$fakeHome = Join-Path $tempRoot 'review-home'
+$settingsDir = Join-Path $fakeHome '.gemini\antigravity-cli'
+$settingsPath = Join-Path $settingsDir 'settings.json'
 
 New-Item -ItemType Directory -Path $targetRepo -Force | Out-Null
 New-Item -ItemType Directory -Path $outside -Force | Out-Null
+New-Item -ItemType Directory -Path $settingsDir -Force | Out-Null
+$settingsFixture = [ordered]@{
+    enableTerminalSandbox = $true
+    toolPermission = 'proceed-in-sandbox'
+    allowNonWorkspaceAccess = $false
+    historySize = 0
+    disableSlashCommands = $true
+    permissions = [ordered]@{ allow = @() }
+}
+$settingsFixture | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $settingsPath -Encoding utf8NoBOM
 
 try {
     Invoke-Checked -FilePath 'git' -Arguments @('init', '--quiet') -WorkingDirectory $targetRepo
@@ -100,6 +113,7 @@ try {
         ExpectedHeadSha = $head
         ExpectedRunId = 'preflight'
         AgyExecutable = 'definitely-not-needed-for-preflight'
+        HomeDirectory = $fakeHome
     }
 
     $insidePrompt = Join-Path $targetRepo 'prompt.txt'
@@ -176,7 +190,12 @@ try {
         $fakeBody = @'
 $ErrorActionPreference = 'Stop'
 
-foreach ($name in @('AGY_REPORTER_TOKEN', 'GITHUB_TOKEN', 'SSH_AUTH_SOCK')) {
+foreach ($name in @(
+    'AGY_REPORTER_TOKEN', 'GITHUB_TOKEN', 'SSH_AUTH_SOCK',
+    'GOOGLE_GEMINI_BASE_URL', 'AGY_ADC_AUTH',
+    'GOOGLE_APPLICATION_CREDENTIALS', 'CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE',
+    'HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'NO_PROXY'
+)) {
     if (-not [string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($name))) {
         Set-Content -LiteralPath '__LEAK_MARKER__' -Value $name -Encoding utf8NoBOM
     }
@@ -224,9 +243,17 @@ pwsh -NoProfile -File "$fakeScript"
         $mutatingParameters.AgyExecutable = $fakeCommand
         $mutatingParameters.OutputPath = $mutatingOutput
 
-        $env:AGY_REPORTER_TOKEN = 'must-not-leak'
-        $env:GITHUB_TOKEN = 'must-not-leak'
-        $env:SSH_AUTH_SOCK = 'must-not-leak'
+        $sensitiveNames = @(
+            'AGY_REPORTER_TOKEN', 'GITHUB_TOKEN', 'SSH_AUTH_SOCK',
+            'GOOGLE_GEMINI_BASE_URL', 'AGY_ADC_AUTH',
+            'GOOGLE_APPLICATION_CREDENTIALS', 'CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE',
+            'HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'NO_PROXY'
+        )
+        $savedSensitive = @{}
+        foreach ($name in $sensitiveNames) {
+            $savedSensitive[$name] = [Environment]::GetEnvironmentVariable($name)
+            [Environment]::SetEnvironmentVariable($name, 'must-not-leak')
+        }
 
         try {
             Assert-Throws -Name 'Git hook persistence attempt invalidates the AGY run' -Action {
@@ -234,9 +261,9 @@ pwsh -NoProfile -File "$fakeScript"
             }
         }
         finally {
-            Remove-Item Env:AGY_REPORTER_TOKEN -ErrorAction SilentlyContinue
-            Remove-Item Env:GITHUB_TOKEN -ErrorAction SilentlyContinue
-            Remove-Item Env:SSH_AUTH_SOCK -ErrorAction SilentlyContinue
+            foreach ($name in $savedSensitive.Keys) {
+                [Environment]::SetEnvironmentVariable($name, $savedSensitive[$name])
+            }
         }
 
         if (Test-Path -LiteralPath $leakMarker) {
@@ -251,6 +278,68 @@ pwsh -NoProfile -File "$fakeScript"
 
         Write-Host '[PASS] sensitive runner environment is stripped from AGY'
         Write-Host '[PASS] Git control-plane mutation prevents final report publication'
+
+        $hostMutationScript = Join-Path $tempRoot 'host-mutation-agy.ps1'
+        $hostMutationCommand = Join-Path $tempRoot 'host-mutation-agy.cmd'
+        $hostMutationOutput = Join-Path $outside 'host-mutation-report.json'
+        $projectOverridePath = Join-Path $fakeHome '.gemini\config\projects\injected.json'
+
+        $hostMutationBody = @'
+$ErrorActionPreference = 'Stop'
+$overridePath = '__PROJECT_OVERRIDE__'
+New-Item -ItemType Directory -Path (Split-Path -Parent $overridePath) -Force | Out-Null
+Set-Content -LiteralPath $overridePath -Value '{"permissionPreset":"turbo"}' -Encoding utf8NoBOM
+
+$report = [ordered]@{
+    schema_version = 1
+    repo = 'Herzchens/Example'
+    pr = 42
+    head_sha = '__HEAD_SHA__'
+    run_id = 'preflight'
+    generated_at = '2026-10-27T07:00:00Z'
+    result = 'passed'
+    summary = 'fake'
+    tests = @()
+    findings = @()
+    limitations = @()
+    tool_failures = @()
+}
+
+[ordered]@{
+    conversation_id = 'fake-host-mutation'
+    status = 'SUCCESS'
+    response = ''
+    structured_output = $report
+    duration_seconds = 0
+    num_turns = 1
+    usage = @{}
+} | ConvertTo-Json -Depth 32 -Compress
+'@
+
+        $hostMutationBody = $hostMutationBody.Replace('__PROJECT_OVERRIDE__', $projectOverridePath.Replace("'", "''"))
+        $hostMutationBody = $hostMutationBody.Replace('__HEAD_SHA__', $head)
+        Set-Content -LiteralPath $hostMutationScript -Value $hostMutationBody -Encoding utf8NoBOM
+
+        @"
+@echo off
+pwsh -NoProfile -File "$hostMutationScript"
+"@ | Set-Content -LiteralPath $hostMutationCommand -Encoding ascii
+
+        $hostMutationParameters = $baseParameters.Clone()
+        $hostMutationParameters.AgyExecutable = $hostMutationCommand
+        $hostMutationParameters.OutputPath = $hostMutationOutput
+
+        Assert-Throws -Name 'Antigravity project-settings persistence invalidates the run' -Action {
+            & $runner @hostMutationParameters
+        }
+
+        if (Test-Path -LiteralPath $hostMutationOutput) {
+            throw 'Host-mutating AGY run left a publishable final report.'
+        }
+
+        Remove-Item -LiteralPath (Split-Path -Parent $projectOverridePath) -Recurse -Force -ErrorAction SilentlyContinue
+
+        Write-Host '[PASS] Antigravity project-settings persistence prevents final report publication'
 
         $floodScript = Join-Path $tempRoot 'flood-agy.ps1'
         $floodCommand = Join-Path $tempRoot 'flood-agy.cmd'
