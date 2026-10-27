@@ -79,6 +79,10 @@ try {
         throw 'Generated caller workflow must not use a PR-controlled pull_request entrypoint.'
     }
 
+    if (-not $callerText.Contains('  pull-requests: read', [StringComparison]::Ordinal)) {
+        throw 'Generated caller workflow does not grant pull-request read permission required by the reusable workflow.'
+    }
+
     if ($callerText -notmatch "agy_sha256: 'b{64}'") {
         throw 'Generated caller workflow does not pin the expected AGY executable SHA-256.'
     }
