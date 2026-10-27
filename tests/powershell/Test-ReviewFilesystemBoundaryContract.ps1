@@ -14,7 +14,8 @@ foreach ($required in @(
     'must be operator-managed outside the review account profile',
     'parent directory is writable by the review account',
     'did not prove an ACL denial',
-    'is readable by the review account'
+    'is readable by the review account',
+    'Assert-NoReparsePointInExistingPath -Path $fullPath -Name "Protected-read probe'
 )) {
     if (-not $text.Contains($required, [StringComparison]::Ordinal)) {
         throw "Filesystem-boundary contract is missing '$required'."
