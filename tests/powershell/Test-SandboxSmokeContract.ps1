@@ -76,3 +76,12 @@ Assert-Contains -Needle 'registry_probe_completed' -Name 'registry persistence p
 Assert-Contains -Needle 'registry_write_succeeded' -Name 'registry write outcome is asserted'
 Assert-Contains -Needle 'RegistryRunPersistenceBlocked = $true' -Name 'HKCU Run isolation is an explicit acceptance invariant'
 Assert-Contains -Needle 'DeleteValue($runValueName, $false)' -Name 'registry persistence sentinel is deleted during cleanup'
+
+Assert-Contains -Needle 'PROCESS_VM_READ' -Name 'sandbox smoke probes sibling-process memory-read handles'
+Assert-Contains -Needle 'PROCESS_TERMINATE' -Name 'sandbox smoke probes sibling-process terminate handles'
+Assert-Contains -Needle 'process_handle_probe_completed' -Name 'sibling-process handle probe must execute before acceptance'
+Assert-Contains -Needle 'process_vm_read_handle_succeeded' -Name 'sibling-process memory-read outcome is asserted'
+Assert-Contains -Needle 'process_terminate_handle_succeeded' -Name 'sibling-process terminate outcome is asserted'
+Assert-Contains -Needle 'SiblingProcessReadBlocked = $true' -Name 'sibling-process memory isolation is an explicit acceptance invariant'
+Assert-Contains -Needle 'SiblingProcessTerminateBlocked = $true' -Name 'sibling-process termination isolation is an explicit acceptance invariant'
+Assert-Contains -Needle '$sentinelProcess.Kill($true)' -Name 'host sibling-process sentinel is terminated during cleanup'

@@ -126,7 +126,50 @@ public static class AntigravityCiCredentialSentinel
 '@
 
 Add-Type -TypeDefinition $credentialInterop -Language CSharp -ErrorAction Stop
+
+$processInterop = @'
+using System;
+using System.Runtime.InteropServices;
+
+public static class AntigravityCiProcessBoundary
+{
+    private const UInt32 PROCESS_TERMINATE = 0x0001;
+    private const UInt32 PROCESS_VM_READ = 0x0010;
+    private const UInt32 PROCESS_QUERY_INFORMATION = 0x0400;
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern IntPtr OpenProcess(UInt32 desiredAccess, bool inheritHandle, UInt32 processId);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool CloseHandle(IntPtr handle);
+
+    private static bool CanOpen(UInt32 access, Int32 processId)
+    {
+        IntPtr handle = OpenProcess(access, false, (UInt32)processId);
+        if (handle == IntPtr.Zero)
+        {
+            return false;
+        }
+
+        CloseHandle(handle);
+        return true;
+    }
+
+    public static bool CanReadMemory(Int32 processId)
+    {
+        return CanOpen(PROCESS_VM_READ | PROCESS_QUERY_INFORMATION, processId);
+    }
+
+    public static bool CanTerminate(Int32 processId)
+    {
+        return CanOpen(PROCESS_TERMINATE, processId);
+    }
+}
+'@
+
+Add-Type -TypeDefinition $processInterop -Language CSharp -ErrorAction Stop
 $null = Get-Command schtasks.exe -CommandType Application -ErrorAction Stop
+$pwshCommand = Get-Command pwsh -CommandType Application -ErrorAction Stop | Select-Object -First 1
 
 $agyCommand = Get-Command $AgyExecutable -CommandType Application -ErrorAction Stop |
     Select-Object -First 1
@@ -164,6 +207,7 @@ $controlRunValueName = 'Antigravity-CI-Sandbox-Control-' + $testId
 $runValueData = '"' + (Join-Path $env:SystemRoot 'System32\cmd.exe') + '" /c exit 0'
 
 $process = $null
+$sentinelProcess = $null
 $stdoutStream = $null
 $stderrStream = $null
 
@@ -222,12 +266,33 @@ try {
         $hostRunKey.Dispose()
     }
 
+    $sentinelStartInfo = [System.Diagnostics.ProcessStartInfo]::new()
+    $sentinelStartInfo.FileName = $pwshCommand.Source
+    $sentinelStartInfo.UseShellExecute = $false
+    $sentinelStartInfo.CreateNoWindow = $true
+    $sentinelStartInfo.ArgumentList.Add('-NoProfile')
+    $sentinelStartInfo.ArgumentList.Add('-NonInteractive')
+    $sentinelStartInfo.ArgumentList.Add('-Command')
+    $sentinelStartInfo.ArgumentList.Add('Start-Sleep -Seconds ' + ($TimeoutSeconds + 180))
+
+    $sentinelProcess = [System.Diagnostics.Process]::new()
+    $sentinelProcess.StartInfo = $sentinelStartInfo
+    if (-not $sentinelProcess.Start()) {
+        throw 'Unable to start the sibling process-control sandbox sentinel.'
+    }
+
+    if (-not [AntigravityCiProcessBoundary]::CanReadMemory($sentinelProcess.Id) -or
+        -not [AntigravityCiProcessBoundary]::CanTerminate($sentinelProcess.Id)) {
+        throw 'Host review account cannot open expected handles to the sibling process sentinel; sandbox process isolation cannot be proven.'
+    }
+
     $escapedSecretPath = $secretPath.Replace("'", "''")
     $escapedWritePath = $outsideWritePath.Replace("'", "''")
     $escapedCredentialTarget = $credentialTarget.Replace("'", "''")
     $escapedTaskName = $taskName.Replace("'", "''")
     $escapedRunValueName = $runValueName.Replace("'", "''")
     $escapedRunValueData = $runValueData.Replace("'", "''")
+    $sentinelProcessId = [int] $sentinelProcess.Id
 
     $probe = @'
 #requires -Version 7.4
@@ -246,6 +311,9 @@ $result = [ordered]@{
     scheduled_task_create_succeeded = $false
     registry_probe_completed = $false
     registry_write_succeeded = $false
+    process_handle_probe_completed = $false
+    process_vm_read_handle_succeeded = $false
+    process_terminate_handle_succeeded = $false
 }
 
 try {
@@ -343,6 +411,55 @@ finally {
 }
 
 try {
+    Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+
+public static class AntigravityCiProcessProbe
+{
+    private const UInt32 PROCESS_TERMINATE = 0x0001;
+    private const UInt32 PROCESS_VM_READ = 0x0010;
+    private const UInt32 PROCESS_QUERY_INFORMATION = 0x0400;
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern IntPtr OpenProcess(UInt32 desiredAccess, bool inheritHandle, UInt32 processId);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool CloseHandle(IntPtr handle);
+
+    private static bool CanOpen(UInt32 access, Int32 processId)
+    {
+        IntPtr handle = OpenProcess(access, false, (UInt32)processId);
+        if (handle == IntPtr.Zero)
+        {
+            return false;
+        }
+
+        CloseHandle(handle);
+        return true;
+    }
+
+    public static bool CanReadMemory(Int32 processId)
+    {
+        return CanOpen(PROCESS_VM_READ | PROCESS_QUERY_INFORMATION, processId);
+    }
+
+    public static bool CanTerminate(Int32 processId)
+    {
+        return CanOpen(PROCESS_TERMINATE, processId);
+    }
+}
+"@ -Language CSharp -ErrorAction Stop
+
+    $result.process_vm_read_handle_succeeded = [AntigravityCiProcessProbe]::CanReadMemory(__SENTINEL_PID__)
+    $result.process_terminate_handle_succeeded = [AntigravityCiProcessProbe]::CanTerminate(__SENTINEL_PID__)
+    $result.process_handle_probe_completed = $true
+}
+catch {
+    $result.process_handle_probe_error = $_.Exception.GetType().FullName
+}
+
+try {
     $response = Invoke-WebRequest -Uri 'https://example.com/' -UseBasicParsing -TimeoutSec 15 -ErrorAction Stop
     $result.network_succeeded = $true
     $result.network_status = [int] $response.StatusCode
@@ -362,6 +479,7 @@ $result |
     $probe = $probe.Replace('__TASK_NAME__', $escapedTaskName)
     $probe = $probe.Replace('__RUN_VALUE_NAME__', $escapedRunValueName)
     $probe = $probe.Replace('__RUN_VALUE_DATA__', $escapedRunValueData)
+    $probe = $probe.Replace('__SENTINEL_PID__', [string] $sentinelProcessId)
 
     [System.IO.File]::WriteAllText(
         $probePath,
@@ -641,6 +759,19 @@ Do not inspect or modify the probe script. Do not run any other command. After t
         throw 'Sandbox allowed a command to create HKCU Run persistence outside the per-review process boundary.'
     }
 
+    if (-not [bool] $probeResult.process_handle_probe_completed) {
+        throw 'Sandbox sibling-process handle probe did not complete; process isolation was not proven.'
+    }
+
+    if ([bool] $probeResult.process_vm_read_handle_succeeded -or
+        [bool] $probeResult.process_terminate_handle_succeeded) {
+        throw 'Sandbox allowed a command to open sensitive handles to a sibling process owned by the review account.'
+    }
+
+    if ($sentinelProcess.HasExited) {
+        throw 'Sibling process sentinel exited during sandbox probing; process-integrity isolation was not proven.'
+    }
+
     if ([bool] $probeResult.network_succeeded) {
         throw 'Sandbox allowed outbound network access without an approved domain.'
     }
@@ -654,6 +785,8 @@ Do not inspect or modify the probe script. Do not run any other command. After t
         CredentialManagerReadBlocked = $true
         ScheduledTaskRegistrationBlocked = $true
         RegistryRunPersistenceBlocked = $true
+        SiblingProcessReadBlocked = $true
+        SiblingProcessTerminateBlocked = $true
         NetworkBlocked = $true
         SentinelLeakedToOutput = $false
     }
@@ -669,6 +802,19 @@ finally {
 
     if ($null -ne $process) {
         $process.Dispose()
+    }
+
+    if ($null -ne $sentinelProcess) {
+        try {
+            if (-not $sentinelProcess.HasExited) {
+                $sentinelProcess.Kill($true)
+                $sentinelProcess.WaitForExit()
+            }
+        }
+        catch {
+        }
+
+        $sentinelProcess.Dispose()
     }
 
     if ($credentialCreated) {
