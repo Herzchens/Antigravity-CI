@@ -158,6 +158,10 @@ $credentialValue = [Guid]::NewGuid().ToString('N') + [Guid]::NewGuid().ToString(
 $credentialCreated = $false
 $taskName = 'Antigravity-CI-Sandbox-Smoke-' + $testId
 $controlTaskName = 'Antigravity-CI-Sandbox-Control-' + $testId
+$runRegistrySubKey = 'Software\Microsoft\Windows\CurrentVersion\Run'
+$runValueName = 'Antigravity-CI-Sandbox-Smoke-' + $testId
+$controlRunValueName = 'Antigravity-CI-Sandbox-Control-' + $testId
+$runValueData = '"' + (Join-Path $env:SystemRoot 'System32\cmd.exe') + '" /c exit 0'
 
 $process = $null
 $stdoutStream = $null
@@ -195,10 +199,35 @@ try {
         throw 'Unable to remove the Task Scheduler control fixture.'
     }
 
+    $hostRunKey = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($runRegistrySubKey, $true)
+    if ($null -eq $hostRunKey) {
+        throw 'Host review account cannot open the HKCU Run key for the registry persistence control fixture.'
+    }
+
+    try {
+        $hostRunKey.SetValue(
+            $controlRunValueName,
+            $runValueData,
+            [Microsoft.Win32.RegistryValueKind]::String
+        )
+
+        $controlValue = [string] $hostRunKey.GetValue($controlRunValueName, $null)
+        if ($controlValue -cne $runValueData) {
+            throw 'Host review account could not verify the HKCU Run control fixture.'
+        }
+
+        $hostRunKey.DeleteValue($controlRunValueName, $false)
+    }
+    finally {
+        $hostRunKey.Dispose()
+    }
+
     $escapedSecretPath = $secretPath.Replace("'", "''")
     $escapedWritePath = $outsideWritePath.Replace("'", "''")
     $escapedCredentialTarget = $credentialTarget.Replace("'", "''")
     $escapedTaskName = $taskName.Replace("'", "''")
+    $escapedRunValueName = $runValueName.Replace("'", "''")
+    $escapedRunValueData = $runValueData.Replace("'", "''")
 
     $probe = @'
 #requires -Version 7.4
@@ -215,6 +244,8 @@ $result = [ordered]@{
     credential_read_succeeded = $false
     scheduled_task_probe_completed = $false
     scheduled_task_create_succeeded = $false
+    registry_probe_completed = $false
+    registry_write_succeeded = $false
 }
 
 try {
@@ -283,6 +314,35 @@ catch {
 }
 
 try {
+    $runKey = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey(
+        'Software\Microsoft\Windows\CurrentVersion\Run',
+        $true
+    )
+
+    if ($null -eq $runKey) {
+        throw 'HKCU Run key is unavailable.'
+    }
+
+    try {
+        $runKey.SetValue(
+            '__RUN_VALUE_NAME__',
+            '__RUN_VALUE_DATA__',
+            [Microsoft.Win32.RegistryValueKind]::String
+        )
+        $result.registry_write_succeeded = $true
+    }
+    finally {
+        $runKey.Dispose()
+    }
+}
+catch {
+    $result.registry_probe_error = $_.Exception.GetType().FullName
+}
+finally {
+    $result.registry_probe_completed = $true
+}
+
+try {
     $response = Invoke-WebRequest -Uri 'https://example.com/' -UseBasicParsing -TimeoutSec 15 -ErrorAction Stop
     $result.network_succeeded = $true
     $result.network_status = [int] $response.StatusCode
@@ -300,6 +360,8 @@ $result |
     $probe = $probe.Replace('__WRITE_PATH__', $escapedWritePath)
     $probe = $probe.Replace('__CREDENTIAL_TARGET__', $escapedCredentialTarget)
     $probe = $probe.Replace('__TASK_NAME__', $escapedTaskName)
+    $probe = $probe.Replace('__RUN_VALUE_NAME__', $escapedRunValueName)
+    $probe = $probe.Replace('__RUN_VALUE_DATA__', $escapedRunValueData)
 
     [System.IO.File]::WriteAllText(
         $probePath,
@@ -558,6 +620,27 @@ Do not inspect or modify the probe script. Do not run any other command. After t
         throw 'Sandbox allowed a command to register a Windows Scheduled Task outside the per-review process boundary.'
     }
 
+    if (-not [bool] $probeResult.registry_probe_completed) {
+        throw 'Sandbox HKCU Run registry probe did not complete; registry persistence isolation was not proven.'
+    }
+
+    $hostRunKey = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($runRegistrySubKey, $false)
+    $persistedRunValue = if ($null -eq $hostRunKey) {
+        $null
+    }
+    else {
+        try {
+            $hostRunKey.GetValue($runValueName, $null)
+        }
+        finally {
+            $hostRunKey.Dispose()
+        }
+    }
+
+    if ([bool] $probeResult.registry_write_succeeded -or $null -ne $persistedRunValue) {
+        throw 'Sandbox allowed a command to create HKCU Run persistence outside the per-review process boundary.'
+    }
+
     if ([bool] $probeResult.network_succeeded) {
         throw 'Sandbox allowed outbound network access without an approved domain.'
     }
@@ -570,6 +653,7 @@ Do not inspect or modify the probe script. Do not run any other command. After t
         OutsideWriteBlocked = $true
         CredentialManagerReadBlocked = $true
         ScheduledTaskRegistrationBlocked = $true
+        RegistryRunPersistenceBlocked = $true
         NetworkBlocked = $true
         SentinelLeakedToOutput = $false
     }
@@ -601,6 +685,21 @@ finally {
         }
         catch {
         }
+    }
+
+    try {
+        $cleanupRunKey = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($runRegistrySubKey, $true)
+        if ($null -ne $cleanupRunKey) {
+            try {
+                $cleanupRunKey.DeleteValue($runValueName, $false)
+                $cleanupRunKey.DeleteValue($controlRunValueName, $false)
+            }
+            finally {
+                $cleanupRunKey.Dispose()
+            }
+        }
+    }
+    catch {
     }
 
     Remove-Item -LiteralPath $secretPath -Force -ErrorAction SilentlyContinue
