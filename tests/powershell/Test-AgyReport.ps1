@@ -151,6 +151,46 @@ try {
         & $resolver @invalidUtf8Parameters
     }
 
+    $contradictoryPath = Join-Path $tempRoot 'contradictory-passed.json'
+    $contradictory = Get-Content -LiteralPath $validFixture -Raw -Encoding utf8 |
+        ConvertFrom-Json -Depth 32
+    $contradictory.result = 'passed'
+    $contradictory |
+        ConvertTo-Json -Depth 32 |
+        Set-Content -LiteralPath $contradictoryPath -Encoding utf8NoBOM
+
+    $contradictoryParameters = $expected.Clone()
+    $contradictoryParameters.ReportPath = $contradictoryPath
+
+    Assert-Throws -Name 'passed report containing a failed test is rejected' -Action {
+        & $resolver @contradictoryParameters
+    }
+
+    $advisoryFindingPath = Join-Path $tempRoot 'advisory-finding-passed.json'
+    $advisoryFinding = Get-Content -LiteralPath $validFixture -Raw -Encoding utf8 |
+        ConvertFrom-Json -Depth 32
+    $advisoryFinding.result = 'passed'
+    foreach ($test in @($advisoryFinding.tests)) {
+        $test.status = 'passed'
+        if ($null -ne $test.PSObject.Properties['evidence']) {
+            $test.PSObject.Properties.Remove('evidence')
+        }
+    }
+    $advisoryFinding |
+        ConvertTo-Json -Depth 32 |
+        Set-Content -LiteralPath $advisoryFindingPath -Encoding utf8NoBOM
+
+    $advisoryFindingParameters = $expected.Clone()
+    $advisoryFindingParameters.ReportPath = $advisoryFindingPath
+    $advisoryResult = & $resolver @advisoryFindingParameters
+
+    if ($advisoryResult.result -ne 'passed' -or $advisoryResult.findings.Count -ne 1) {
+        throw 'Advisory findings should remain reportable without an invented severity-to-result policy.'
+    }
+
+    Write-Host '[PASS] report result cannot contradict failed test evidence'
+    Write-Host '[PASS] finding severity remains advisory rather than an automatic result override'
+
     $symlinkPath = Join-Path $tempRoot 'report-link.json'
     $symlinkCreated = $false
     try {
