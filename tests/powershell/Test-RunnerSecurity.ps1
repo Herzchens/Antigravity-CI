@@ -113,6 +113,35 @@ exit /b 2
 
     Write-Host '[PASS] isolated review account fixture passes with public key only'
 
+    $publisherParameters = @{
+        Role = 'Publisher'
+        AgyExecutable = 'publisher-does-not-require-agy'
+        HomeDirectory = $fakeHome
+        MinimumWindowsBuild = 1
+        ForbiddenIdentities = @('OTHER-HOST\OtherUser')
+    }
+
+    $publisher = & $preflight @publisherParameters
+
+    if (-not $publisher.Valid -or $publisher.Role -ne 'Publisher') {
+        throw 'Clean publisher fixture did not pass the runner-security preflight.'
+    }
+
+    Write-Host '[PASS] isolated publisher role requires no AGY executable or signing key'
+
+    $publisherSameIdentity = $publisherParameters.Clone()
+    $publisherSameIdentity.ForbiddenIdentities = @($publisher.Identity)
+
+    Assert-Throws -Name 'publisher role rejects reuse of a forbidden runner identity' -Action {
+        & $preflight @publisherSameIdentity
+    }
+
+    $env:AGY_REPORTER_TOKEN = 'fixture-secret'
+    Assert-Throws -Name 'publisher preflight rejects reporter token materialized too early' -Action {
+        & $preflight @publisherParameters
+    }
+    Remove-Item Env:AGY_REPORTER_TOKEN -ErrorAction SilentlyContinue
+
     $sameIdentityParameters = $reviewParameters.Clone()
     $sameIdentityParameters.ForbiddenIdentity = $review.Identity
 

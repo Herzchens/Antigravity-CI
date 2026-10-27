@@ -11,6 +11,10 @@ on:
         description: Deployment-specific label for the AGY review runner.
         required: true
         type: string
+      publisher_runner_label:
+        description: Deployment-specific label for the isolated report publisher runner.
+        required: true
+        type: string
       signing_public_key_path:
         description: Absolute path to the owner SSH public signing key on the signing runner.
         required: true
@@ -68,7 +72,13 @@ concurrency:
 
 jobs:
   sign:
-    if: github.event_name == 'pull_request'
+    if: >-
+      github.event_name == 'pull_request' &&
+      contains(fromJSON('["opened","reopened","synchronize","ready_for_review"]'), github.event.action) &&
+      github.event.pull_request.draft == false &&
+      github.event.pull_request.base.ref == github.event.repository.default_branch &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.repo.id == github.event.pull_request.base.repo.id
     runs-on: [self-hosted, Windows, "${{ inputs.signing_runner_label }}"]
     permissions:
       contents: read
@@ -78,6 +88,21 @@ jobs:
       signing_runner_identity: ${{ steps.signing_security.outputs.runner_identity }}
       signing_key_fingerprint: ${{ steps.signing_security.outputs.trusted_fingerprint }}
     steps:
+      - name: Clean persistent runner workspace
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          foreach ($path in @(
+            (Join-Path $env:GITHUB_WORKSPACE 'target'),
+            (Join-Path $env:GITHUB_WORKSPACE 'infrastructure'),
+            (Join-Path $env:RUNNER_TEMP 'antigravity-ci')
+          )) {
+            Remove-Item -LiteralPath $path -Recurse -Force -ErrorAction SilentlyContinue
+            if (Test-Path -LiteralPath $path) {
+              throw "Unable to clean persistent runner path: $path"
+            }
+          }
+
       - name: Checkout exact PR head for signing
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -158,6 +183,39 @@ jobs:
           Write-Host 'Signed history was pushed. This run stops before AGY review.'
           Write-Host 'The credential used for the push must produce a fresh pull_request synchronize run for the signed head.'
 
+      - name: Dispose signing workspace
+        if: always()
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          function Remove-TreeWithRetry {
+            param([Parameter(Mandatory)][string] $Path)
+
+            if (-not (Test-Path -LiteralPath $Path)) {
+              return
+            }
+
+            for ($attempt = 1; $attempt -le 3; $attempt++) {
+              try {
+                Remove-Item -LiteralPath $Path -Recurse -Force -ErrorAction Stop
+                if (Test-Path -LiteralPath $Path) {
+                  throw "Path still exists after removal: $Path"
+                }
+                return
+              }
+              catch {
+                if ($attempt -eq 3) {
+                  throw
+                }
+                Start-Sleep -Seconds 1
+              }
+            }
+          }
+
+          Remove-TreeWithRetry -Path (Join-Path $env:GITHUB_WORKSPACE 'target')
+          Remove-TreeWithRetry -Path (Join-Path $env:GITHUB_WORKSPACE 'infrastructure')
+
   review:
     needs: sign
     if: needs.sign.outputs.rewritten == 'false' && needs.sign.outputs.signed_head == github.event.pull_request.head.sha
@@ -165,7 +223,25 @@ jobs:
     permissions:
       contents: read
       pull-requests: read
+    outputs:
+      review_runner_identity: ${{ steps.review_security.outputs.runner_identity }}
+      report_sha256: ${{ steps.report_digest.outputs.sha256 }}
     steps:
+      - name: Clean persistent runner workspace
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          foreach ($path in @(
+            (Join-Path $env:GITHUB_WORKSPACE 'target'),
+            (Join-Path $env:GITHUB_WORKSPACE 'infrastructure'),
+            (Join-Path $env:RUNNER_TEMP 'antigravity-ci')
+          )) {
+            Remove-Item -LiteralPath $path -Recurse -Force -ErrorAction SilentlyContinue
+            if (Test-Path -LiteralPath $path) {
+              throw "Unable to clean persistent runner path: $path"
+            }
+          }
+
       - name: Checkout exact signed PR head without credentials
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -185,6 +261,7 @@ jobs:
           path: infrastructure
 
       - name: Verify isolated review runner security boundary
+        id: review_security
         shell: pwsh
         env:
           INFRA_PATH: ${{ github.workspace }}\infrastructure
@@ -193,12 +270,14 @@ jobs:
           SIGNING_RUNNER_IDENTITY: ${{ needs.sign.outputs.signing_runner_identity }}
           SIGNING_KEY_FINGERPRINT: ${{ needs.sign.outputs.signing_key_fingerprint }}
         run: |
-          & (Join-Path $env:INFRA_PATH 'scripts\Assert-RunnerSecurity.ps1') `
+          $security = & (Join-Path $env:INFRA_PATH 'scripts\Assert-RunnerSecurity.ps1') `
             -Role Review `
             -TrustedPublicKey $env:REVIEW_TRUSTED_PUBLIC_KEY_PATH `
             -ForbiddenIdentity $env:SIGNING_RUNNER_IDENTITY `
             -ExpectedTrustedKeyFingerprint $env:SIGNING_KEY_FINGERPRINT `
-            -AgyExecutable $env:AGY_EXECUTABLE | Out-Null
+            -AgyExecutable $env:AGY_EXECUTABLE
+
+          Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "runner_identity=$($security.Identity)" -Encoding utf8
 
       - name: Revalidate exact PR head
         shell: pwsh
@@ -286,26 +365,27 @@ jobs:
             -AgyExecutable $env:AGY_EXECUTABLE `
             -PrintTimeoutSeconds ([int] $env:AGY_PRINT_TIMEOUT) | Out-Null
 
-      - name: Publish report with distinct identity
+      - name: Hash validated report
+        id: report_digest
         shell: pwsh
         env:
-          AGY_REPORTER_TOKEN: ${{ secrets.reporter_token }}
-          TARGET_REPOSITORY: ${{ github.repository }}
-          TARGET_PR: ${{ github.event.pull_request.number }}
-          TARGET_HEAD: ${{ github.event.pull_request.head.sha }}
-          INFRA_PATH: ${{ github.workspace }}\infrastructure
-          REVIEW_RUN_ID: ${{ github.run_id }}.${{ github.run_attempt }}
-          EXPECTED_REPORTER_LOGIN: ${{ inputs.expected_reporter_login }}
+          REPORT_PATH: ${{ runner.temp }}\antigravity-ci\${{ github.run_id }}-${{ github.run_attempt }}\agy-report.json
         run: |
-          $stateRoot = Join-Path $env:RUNNER_TEMP ('antigravity-ci\' + $env:GITHUB_RUN_ID + '-' + $env:GITHUB_RUN_ATTEMPT)
+          $hash = (Get-FileHash -LiteralPath $env:REPORT_PATH -Algorithm SHA256 -ErrorAction Stop).Hash.ToLowerInvariant()
+          if ($hash -notmatch '^[0-9a-f]{64}$') {
+            throw 'Unable to compute a valid SHA-256 digest for the validated AGY report.'
+          }
 
-          & (Join-Path $env:INFRA_PATH 'scripts\Publish-AgyReport.ps1') `
-            -ReportPath (Join-Path $stateRoot 'agy-report.json') `
-            -ExpectedRepository $env:TARGET_REPOSITORY `
-            -ExpectedPr ([int] $env:TARGET_PR) `
-            -ExpectedHeadSha $env:TARGET_HEAD `
-            -ExpectedRunId $env:REVIEW_RUN_ID `
-            -ExpectedReporterLogin $env:EXPECTED_REPORTER_LOGIN | Out-Null
+          Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "sha256=$hash" -Encoding utf8
+
+      - name: Upload validated report for isolated publisher
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: agy-report-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}\antigravity-ci\${{ github.run_id }}-${{ github.run_attempt }}\agy-report.json
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
 
       - name: Dispose reviewed workspace and review state
         if: always()
@@ -341,6 +421,144 @@ jobs:
           }
 
           Remove-TreeWithRetry -Path $env:TARGET_PATH
+          Remove-TreeWithRetry -Path (Join-Path $env:GITHUB_WORKSPACE 'infrastructure')
 
           $stateRoot = Join-Path $env:RUNNER_TEMP ('antigravity-ci\' + $env:GITHUB_RUN_ID + '-' + $env:GITHUB_RUN_ATTEMPT)
           Remove-TreeWithRetry -Path $stateRoot
+
+  publisher:
+    needs: [sign, review]
+    if: needs.sign.outputs.rewritten == 'false' && needs.sign.outputs.signed_head == github.event.pull_request.head.sha
+    runs-on: [self-hosted, Windows, "${{ inputs.publisher_runner_label }}"]
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Clean persistent runner workspace
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          foreach ($path in @(
+            (Join-Path $env:GITHUB_WORKSPACE 'target'),
+            (Join-Path $env:GITHUB_WORKSPACE 'infrastructure'),
+            (Join-Path $env:RUNNER_TEMP 'antigravity-ci')
+          )) {
+            Remove-Item -LiteralPath $path -Recurse -Force -ErrorAction SilentlyContinue
+            if (Test-Path -LiteralPath $path) {
+              throw "Unable to clean persistent runner path: $path"
+            }
+          }
+
+      - name: Checkout trusted Antigravity-CI implementation
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+          token: ${{ secrets.infrastructure_read_token != '' && secrets.infrastructure_read_token || github.token }}
+          path: infrastructure
+
+      - name: Verify isolated publisher runner security boundary
+        shell: pwsh
+        env:
+          INFRA_PATH: ${{ github.workspace }}\infrastructure
+          SIGNING_RUNNER_IDENTITY: ${{ needs.sign.outputs.signing_runner_identity }}
+          REVIEW_RUNNER_IDENTITY: ${{ needs.review.outputs.review_runner_identity }}
+        run: |
+          $securityParameters = @{
+            Role = 'Publisher'
+            ForbiddenIdentity = $env:SIGNING_RUNNER_IDENTITY
+            ForbiddenIdentities = @($env:REVIEW_RUNNER_IDENTITY)
+          }
+
+          & (Join-Path $env:INFRA_PATH 'scripts\Assert-RunnerSecurity.ps1') @securityParameters | Out-Null
+
+      - name: Download validated AGY report
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: agy-report-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}\antigravity-ci\${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: Verify downloaded report digest
+        shell: pwsh
+        env:
+          REPORT_PATH: ${{ runner.temp }}\antigravity-ci\${{ github.run_id }}-${{ github.run_attempt }}\agy-report.json
+          EXPECTED_REPORT_SHA256: ${{ needs.review.outputs.report_sha256 }}
+        run: |
+          if ($env:EXPECTED_REPORT_SHA256 -notmatch '^[0-9a-f]{64}$') {
+            throw 'Review job did not provide a valid report SHA-256 digest.'
+          }
+
+          $actual = (Get-FileHash -LiteralPath $env:REPORT_PATH -Algorithm SHA256 -ErrorAction Stop).Hash.ToLowerInvariant()
+          if ($actual -cne $env:EXPECTED_REPORT_SHA256) {
+            throw 'Downloaded AGY report digest does not match the validated review output.'
+          }
+
+      - name: Revalidate exact PR head before publication
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          TARGET_REPOSITORY: ${{ github.repository }}
+          TARGET_PR: ${{ github.event.pull_request.number }}
+          TARGET_HEAD: ${{ github.event.pull_request.head.sha }}
+          INFRA_PATH: ${{ github.workspace }}\infrastructure
+        run: |
+          & (Join-Path $env:INFRA_PATH 'scripts\Assert-CurrentPullRequestHead.ps1') `
+            -Repository $env:TARGET_REPOSITORY `
+            -PrNumber ([int] $env:TARGET_PR) `
+            -ExpectedHeadSha $env:TARGET_HEAD | Out-Null
+
+      - name: Publish report with distinct identity
+        shell: pwsh
+        env:
+          AGY_REPORTER_TOKEN: ${{ secrets.reporter_token }}
+          TARGET_REPOSITORY: ${{ github.repository }}
+          TARGET_PR: ${{ github.event.pull_request.number }}
+          TARGET_HEAD: ${{ github.event.pull_request.head.sha }}
+          INFRA_PATH: ${{ github.workspace }}\infrastructure
+          REVIEW_RUN_ID: ${{ github.run_id }}.${{ github.run_attempt }}
+          EXPECTED_REPORTER_LOGIN: ${{ inputs.expected_reporter_login }}
+        run: |
+          $stateRoot = Join-Path $env:RUNNER_TEMP ('antigravity-ci\' + $env:GITHUB_RUN_ID + '-' + $env:GITHUB_RUN_ATTEMPT)
+
+          & (Join-Path $env:INFRA_PATH 'scripts\Publish-AgyReport.ps1') `
+            -ReportPath (Join-Path $stateRoot 'agy-report.json') `
+            -ExpectedRepository $env:TARGET_REPOSITORY `
+            -ExpectedPr ([int] $env:TARGET_PR) `
+            -ExpectedHeadSha $env:TARGET_HEAD `
+            -ExpectedRunId $env:REVIEW_RUN_ID `
+            -ExpectedReporterLogin $env:EXPECTED_REPORTER_LOGIN | Out-Null
+
+      - name: Dispose publisher state
+        if: always()
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          function Remove-TreeWithRetry {
+            param([Parameter(Mandatory)][string] $Path)
+
+            if (-not (Test-Path -LiteralPath $Path)) {
+              return
+            }
+
+            for ($attempt = 1; $attempt -le 3; $attempt++) {
+              try {
+                Remove-Item -LiteralPath $Path -Recurse -Force -ErrorAction Stop
+                if (Test-Path -LiteralPath $Path) {
+                  throw "Path still exists after removal: $Path"
+                }
+                return
+              }
+              catch {
+                if ($attempt -eq 3) {
+                  throw
+                }
+                Start-Sleep -Seconds 1
+              }
+            }
+          }
+
+          Remove-TreeWithRetry -Path (Join-Path $env:GITHUB_WORKSPACE 'infrastructure')
+          Remove-TreeWithRetry -Path (Join-Path $env:RUNNER_TEMP 'antigravity-ci')

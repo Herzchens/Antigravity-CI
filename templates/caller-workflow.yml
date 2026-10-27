@@ -14,6 +14,7 @@ jobs:
     with:
       signing_runner_label: antigravity-signing
       review_runner_label: antigravity-review
+      publisher_runner_label: antigravity-publisher
       signing_public_key_path: 'C:\Users\Herzchen\.ssh\id_ed25519.pub'
       review_trusted_public_key_path: 'C:\ProgramData\Antigravity-CI\trusted_signing_key.pub'
       expected_reporter_login: 'Herzchen-AGY[bot]'
