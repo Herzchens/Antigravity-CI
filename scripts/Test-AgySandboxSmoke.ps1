@@ -128,6 +128,13 @@ public static class AntigravityCiCredentialSentinel
 Add-Type -TypeDefinition $credentialInterop -Language CSharp -ErrorAction Stop
 $null = Get-Command schtasks.exe -CommandType Application -ErrorAction Stop
 
+$processJobHelper = Join-Path $PSScriptRoot 'WindowsProcessJob.ps1'
+if (-not (Test-Path -LiteralPath $processJobHelper -PathType Leaf)) {
+    throw 'WindowsProcessJob.ps1 is required next to the sandbox smoke test.'
+}
+
+. $processJobHelper
+
 $agyCommand = Get-Command $AgyExecutable -CommandType Application -ErrorAction Stop |
     Select-Object -First 1
 $agyPath = [System.IO.Path]::GetFullPath($agyCommand.Source)
@@ -168,6 +175,7 @@ $hostUserEnvironmentWriteAllowed = $false
 $hostUserEnvironmentControlError = $null
 
 $process = $null
+$processJob = [IntPtr]::Zero
 $stdoutStream = $null
 $stderrStream = $null
 
@@ -537,9 +545,23 @@ Do not inspect or modify the probe script. Do not run any other command. After t
 
     $process = [System.Diagnostics.Process]::new()
     $process.StartInfo = $startInfo
+    $processJob = New-WindowsKillOnCloseJob
 
     if (-not $process.Start()) {
         throw 'Failed to start Antigravity CLI for sandbox smoke test.'
+    }
+
+    try {
+        Add-ProcessToWindowsJob -Job $processJob -Process $process
+    }
+    catch {
+        try {
+            $process.Kill($true)
+        }
+        catch {
+        }
+
+        throw 'Antigravity sandbox smoke process could not be attached to the Windows kill-on-close process job.'
     }
 
     $stdoutStream = [System.IO.File]::Open(
@@ -758,6 +780,20 @@ finally {
         $stderrStream.Dispose()
     }
 
+    $containmentCloseFailure = $null
+
+    if ($processJob -ne [IntPtr]::Zero) {
+        try {
+            Close-WindowsProcessJob -Job $processJob
+        }
+        catch {
+            $containmentCloseFailure = $_
+        }
+        finally {
+            $processJob = [IntPtr]::Zero
+        }
+    }
+
     if ($null -ne $process) {
         $process.Dispose()
     }
@@ -808,5 +844,9 @@ finally {
 
     if (Test-Path -LiteralPath $tempRoot) {
         Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+    }
+
+    if ($null -ne $containmentCloseFailure) {
+        throw 'Unable to close the sandbox smoke Windows process job cleanly.'
     }
 }
