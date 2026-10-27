@@ -28,7 +28,9 @@ param(
     [switch] $Push,
 
     [ValidatePattern('^[0-9a-fA-F]{40}$')]
-    [string] $ExpectedRemoteHead
+    [string] $ExpectedRemoteHead,
+
+    [string] $ExpectedRemoteUrl
 )
 
 Set-StrictMode -Version Latest
@@ -52,6 +54,60 @@ function Invoke-Git {
     [pscustomobject]@{
         ExitCode = $exitCode
         Output = $output
+    }
+}
+
+function Get-RemoteUrls {
+    param(
+        [switch] $PushUrls
+    )
+
+    $arguments = [System.Collections.Generic.List[string]]::new()
+    $arguments.Add('remote')
+    $arguments.Add('get-url')
+
+    if ($PushUrls) {
+        $arguments.Add('--push')
+    }
+
+    $arguments.Add('--all')
+    $arguments.Add($RemoteName)
+
+    $result = Invoke-Git -Arguments @($arguments) -AllowFailure
+    if ($result.ExitCode -ne 0) {
+        throw "Unable to resolve remote URLs for '$RemoteName'."
+    }
+
+    @(
+        $result.Output |
+        ForEach-Object { [string] $_ } |
+        Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+        ForEach-Object { $_.Trim() }
+    )
+}
+
+function Assert-ExpectedRemote {
+    if ([string]::IsNullOrWhiteSpace($ExpectedRemoteUrl)) {
+        throw 'ExpectedRemoteUrl is required when -Push is used.'
+    }
+
+    $fetchUrls = @(Get-RemoteUrls)
+    $pushUrls = @(Get-RemoteUrls -PushUrls)
+
+    if ($fetchUrls.Count -ne 1) {
+        throw "Remote '$RemoteName' must expose exactly one fetch URL."
+    }
+
+    if ($pushUrls.Count -ne 1) {
+        throw "Remote '$RemoteName' must expose exactly one effective push URL."
+    }
+
+    if ($fetchUrls[0] -cne $ExpectedRemoteUrl) {
+        throw "Remote '$RemoteName' fetch URL does not match the expected endpoint."
+    }
+
+    if ($pushUrls[0] -cne $ExpectedRemoteUrl) {
+        throw "Remote '$RemoteName' push URL does not match the expected endpoint."
     }
 }
 
@@ -576,6 +632,10 @@ $branchCheck = Invoke-Git -Arguments @(
 
 if ($branchCheck.ExitCode -ne 0) {
     throw 'Branch name is not a valid Git branch name.'
+}
+
+if ($Push) {
+    Assert-ExpectedRemote
 }
 
 $base = Resolve-Commit -Sha $BaseSha
