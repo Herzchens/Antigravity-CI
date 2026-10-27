@@ -128,3 +128,10 @@ Assert-Contains -Text $workflow -Needle 'report_sha256:' -Name 'review exports t
 Assert-Contains -Text $workflow -Needle 'Hash validated report' -Name 'review hashes the validated report before artifact upload'
 Assert-Contains -Text $workflow -Needle 'Verify downloaded report digest' -Name 'publisher verifies report bytes before publication'
 Assert-Contains -Text $workflow -Needle 'needs.review.outputs.report_sha256' -Name 'publisher digest check is bound to review-job output'
+
+Assert-NotContains -Text $workflow -Needle 'persist-credentials: true' -Name 'self-hosted checkouts never persist credentials'
+Assert-NotContains -Text $workflow -Needle ('token: $' + '{{ secrets.signing_push_token }}') -Name 'signing write token is not materialized by checkout'
+Assert-Contains -Text $workflow -Needle ('SIGNING_PUSH_TOKEN: $' + '{{ secrets.signing_push_token }}') -Name 'signing write token is scoped to the signing step'
+Assert-Contains -Text $workflow -Needle 'http.https://github.com/.extraheader' -Name 'signing push credential is process-scoped through Git config environment'
+Assert-Contains -Text $workflow -Needle '::add-mask::$encodedCredential' -Name 'derived signing credential is masked before use'
+Assert-Contains -Text $workflow -Needle '$env:SIGNING_PUSH_TOKEN = $null' -Name 'signing write token is cleared after the signing push attempt'
