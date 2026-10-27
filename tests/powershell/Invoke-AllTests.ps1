@@ -7,6 +7,7 @@ $pwsh = (Get-Command pwsh -CommandType Application -ErrorAction Stop).Source
 $testsRoot = $PSScriptRoot
 
 $tests = @(
+    'Test-PowerShellSyntax.ps1',
     'Test-Contracts.ps1',
     'Test-ProjectConfig.ps1',
     'Test-SignatureVerification.ps1',
