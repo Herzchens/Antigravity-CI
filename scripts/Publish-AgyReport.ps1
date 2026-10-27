@@ -18,6 +18,14 @@ param(
     [string] $ExpectedHeadSha,
 
     [Parameter(Mandatory)]
+    [ValidatePattern('^[0-9a-f]{40}$')]
+    [string] $ExpectedBaseSha,
+
+    [Parameter(Mandatory)]
+    [ValidatePattern('^[A-Za-z0-9._/-]+$')]
+    [string] $ExpectedBaseRef,
+
+    [Parameter(Mandatory)]
     [ValidateLength(1, 128)]
     [string] $ExpectedRunId,
 
@@ -34,6 +42,51 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+
+function Assert-ExpectedPullState {
+    param(
+        [AllowNull()]
+        [object] $Pull,
+
+        [Parameter(Mandatory)]
+        [string] $Phase
+    )
+
+    if ($null -eq $Pull) {
+        throw "GitHub pull-request lookup returned no JSON body during $Phase."
+    }
+
+    if ([int] $Pull.number -ne $ExpectedPr) {
+        throw "Pull request number changed or was unexpected during $Phase."
+    }
+
+    if ([string] $Pull.state -cne 'open' -or [bool] $Pull.draft) {
+        throw "Pull request is not an open, ready-for-review PR during $Phase."
+    }
+
+    if ([string] $Pull.head.sha -cne $ExpectedHeadSha) {
+        throw "Pull request head moved during $Phase; refusing a stale AGY report."
+    }
+
+    if ([string] $Pull.base.sha -cne $ExpectedBaseSha -or
+        [string] $Pull.base.ref -cne $ExpectedBaseRef) {
+        throw "Pull request trusted base moved during $Phase; refusing a stale AGY report."
+    }
+
+    if ([string] $Pull.head.repo.full_name -cne $ExpectedRepository -or
+        [string] $Pull.base.repo.full_name -cne $ExpectedRepository) {
+        throw "Pull request repository identity changed during $Phase."
+    }
+
+    $headRepositoryId = [long] $Pull.head.repo.id
+    $baseRepositoryId = [long] $Pull.base.repo.id
+
+    if ($headRepositoryId -le 0 -or
+        $baseRepositoryId -le 0 -or
+        $headRepositoryId -ne $baseRepositoryId) {
+        throw "Pull request repository IDs are no longer a trusted same-repository pair during $Phase."
+    }
+}
 
 function Invoke-GitHubRequest {
     param(
@@ -142,7 +195,12 @@ $reportParameters = @{
 $report = & $reportResolver @reportParameters
 $formatted = & $commentFormatter -Report $report -MaxCharacters $MaxCommentCharacters
 
-$client = [System.Net.Http.HttpClient]::new()
+$handler = [System.Net.Http.HttpClientHandler]::new()
+$handler.AllowAutoRedirect = $false
+$handler.UseCookies = $false
+$handler.UseDefaultCredentials = $false
+
+$client = [System.Net.Http.HttpClient]::new($handler, $true)
 $client.Timeout = [TimeSpan]::FromSeconds(30)
 $client.DefaultRequestHeaders.UserAgent.ParseAdd('Antigravity-CI/1')
 $client.DefaultRequestHeaders.Accept.ParseAdd('application/vnd.github+json')
@@ -155,21 +213,7 @@ try {
     $pullResponse = Invoke-GitHubRequest -Client $client -Method ([System.Net.Http.HttpMethod]::Get) -Uri $pullUri -Body $null
     $pull = $pullResponse.Json
 
-    if ($null -eq $pull) {
-        throw 'GitHub pull-request lookup returned no JSON body.'
-    }
-
-    if ([string] $pull.state -cne 'open') {
-        throw 'Pull request is no longer open; refusing to publish an AGY report.'
-    }
-
-    if ([string] $pull.head.sha -cne $ExpectedHeadSha) {
-        throw 'Pull request head moved after review; refusing to publish a stale AGY report.'
-    }
-
-    if ([string] $pull.head.repo.full_name -cne $ExpectedRepository) {
-        throw 'Pull request head repository no longer matches the expected trusted repository.'
-    }
+    Assert-ExpectedPullState -Pull $pull -Phase 'initial publication check'
 
     $alreadyPublished = $false
     $existingComment = $null
@@ -201,12 +245,7 @@ try {
         $existingFreshResponse = Invoke-GitHubRequest -Client $client -Method ([System.Net.Http.HttpMethod]::Get) -Uri $pullUri -Body $null
         $existingFresh = $existingFreshResponse.Json
 
-        if ($null -eq $existingFresh -or
-            [string] $existingFresh.state -cne 'open' -or
-            [string] $existingFresh.head.sha -cne $ExpectedHeadSha -or
-            [string] $existingFresh.head.repo.full_name -cne $ExpectedRepository) {
-            throw 'Pull request changed while checking report idempotency; refusing to accept a stale existing report.'
-        }
+        Assert-ExpectedPullState -Pull $existingFresh -Phase 'idempotency recheck'
 
         [pscustomobject][ordered]@{
             AlreadyPublished = $true
@@ -222,12 +261,7 @@ try {
     $freshPullResponse = Invoke-GitHubRequest -Client $client -Method ([System.Net.Http.HttpMethod]::Get) -Uri $pullUri -Body $null
     $freshPull = $freshPullResponse.Json
 
-    if ($null -eq $freshPull -or
-        [string] $freshPull.state -cne 'open' -or
-        [string] $freshPull.head.sha -cne $ExpectedHeadSha -or
-        [string] $freshPull.head.repo.full_name -cne $ExpectedRepository) {
-        throw 'Pull request changed while preparing publication; refusing to publish a stale AGY report.'
-    }
+    Assert-ExpectedPullState -Pull $freshPull -Phase 'pre-publication recheck'
 
     $commentsUri = [uri] "$base/repos/$ExpectedRepository/issues/$ExpectedPr/comments"
     $postResponse = Invoke-GitHubRequest -Client $client -Method ([System.Net.Http.HttpMethod]::Post) -Uri $commentsUri -Body @{
@@ -262,10 +296,15 @@ try {
     $postPublishResponse = Invoke-GitHubRequest -Client $client -Method ([System.Net.Http.HttpMethod]::Get) -Uri $pullUri -Body $null
     $postPublishPull = $postPublishResponse.Json
 
-    if ($null -eq $postPublishPull -or
-        [string] $postPublishPull.state -cne 'open' -or
-        [string] $postPublishPull.head.sha -cne $ExpectedHeadSha -or
-        [string] $postPublishPull.head.repo.full_name -cne $ExpectedRepository) {
+    $postPublishStateFailure = $null
+    try {
+        Assert-ExpectedPullState -Pull $postPublishPull -Phase 'post-publication recheck'
+    }
+    catch {
+        $postPublishStateFailure = $_
+    }
+
+    if ($null -ne $postPublishStateFailure) {
         $commentId = [long] $created.id
         $deleteUri = [uri] "$base/repos/$ExpectedRepository/issues/comments/$commentId"
         $cleanupFailed = $false
@@ -278,10 +317,10 @@ try {
         }
 
         if ($cleanupFailed) {
-            throw "Pull request head changed immediately after publication. Cleanup of stale comment $commentId failed."
+            throw "Pull request changed immediately after publication. Cleanup of stale comment $commentId also failed."
         }
 
-        throw 'Pull request head changed immediately after publication. The stale report comment was deleted.'
+        throw "Pull request changed immediately after publication. The stale report comment was deleted. $($postPublishStateFailure.Exception.Message)"
     }
 
     [pscustomobject][ordered]@{

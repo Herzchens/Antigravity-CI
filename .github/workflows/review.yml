@@ -747,6 +747,8 @@ jobs:
           AGY_REPORTER_TOKEN: ${{ steps.reporter_app.outputs.token }}
           TARGET_REPOSITORY: ${{ github.repository }}
           TARGET_PR: ${{ github.event.pull_request.number }}
+          TARGET_BASE_REF: ${{ github.event.pull_request.base.ref }}
+          TARGET_BASE: ${{ github.event.pull_request.base.sha }}
           TARGET_HEAD: ${{ github.event.pull_request.head.sha }}
           INFRA_PATH: ${{ github.workspace }}\infrastructure
           REVIEW_RUN_ID: ${{ github.run_id }}.${{ github.run_attempt }}
@@ -759,6 +761,8 @@ jobs:
             -ExpectedRepository $env:TARGET_REPOSITORY `
             -ExpectedPr ([int] $env:TARGET_PR) `
             -ExpectedHeadSha $env:TARGET_HEAD `
+            -ExpectedBaseSha $env:TARGET_BASE `
+            -ExpectedBaseRef $env:TARGET_BASE_REF `
             -ExpectedRunId $env:REVIEW_RUN_ID `
             -ExpectedReporterLogin $env:EXPECTED_REPORTER_LOGIN | Out-Null
 
@@ -769,6 +773,8 @@ jobs:
           AGY_REPORTER_TOKEN: ${{ secrets.reporter_token }}
           TARGET_REPOSITORY: ${{ github.repository }}
           TARGET_PR: ${{ github.event.pull_request.number }}
+          TARGET_BASE_REF: ${{ github.event.pull_request.base.ref }}
+          TARGET_BASE: ${{ github.event.pull_request.base.sha }}
           TARGET_HEAD: ${{ github.event.pull_request.head.sha }}
           INFRA_PATH: ${{ github.workspace }}\infrastructure
           REVIEW_RUN_ID: ${{ github.run_id }}.${{ github.run_attempt }}
@@ -781,6 +787,8 @@ jobs:
             -ExpectedRepository $env:TARGET_REPOSITORY `
             -ExpectedPr ([int] $env:TARGET_PR) `
             -ExpectedHeadSha $env:TARGET_HEAD `
+            -ExpectedBaseSha $env:TARGET_BASE `
+            -ExpectedBaseRef $env:TARGET_BASE_REF `
             -ExpectedRunId $env:REVIEW_RUN_ID `
             -ExpectedReporterLogin $env:EXPECTED_REPORTER_LOGIN | Out-Null
 

@@ -19,6 +19,7 @@ $tests = @(
     'Test-PrepareAgyReview.ps1',
     'Test-ProjectCapabilities.ps1',
     'Test-WorkflowContract.ps1',
+    'Test-PublisherSecurityContract.ps1',
     'Test-RunnerSecurity.ps1',
     'Test-AgySettingsPolicy.ps1',
     'Test-AgyHostPolicy.ps1',
