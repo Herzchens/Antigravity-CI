@@ -179,14 +179,31 @@ Assert-Contains -Text $workflow -Needle 'http.https://github.com/.extraheader' -
 Assert-Contains -Text $workflow -Needle '$env:SIGNING_PUSH_TOKEN = $null' -Name 'signing token variable is cleared after use'
 Assert-Contains -Text $signJobText -Needle "$expectedRemoteUrl = 'https://github.com/' + $context.Repository + '.git'" -Name 'signing canonicalizes origin to the trusted GitHub repository'
 Assert-Contains -Text $signJobText -Needle 'remote.origin.pushurl' -Name 'signing rejects a separate push endpoint'
-Assert-Contains -Text $signJobText -Needle '-ExpectedRemoteUrl $expectedRemoteUrl' -Name 'signing gate binds fetch and push to the canonical endpoint'
+Assert-Contains -Text $signJobText -Needle '-ExpectedRemoteUrl $env:EXPECTED_REMOTE_URL' -Name 'signing gate binds fetch and push to the validated canonical endpoint'
+
+$prepareSigningPosition = $signJobText.IndexOf('- name: Prepare exact signing target', [StringComparison]::Ordinal)
+$credentialSigningPosition = $signJobText.IndexOf('- name: Sign exact feature history with dedicated credential', [StringComparison]::Ordinal)
+if ($prepareSigningPosition -lt 0 -or
+    $credentialSigningPosition -le $prepareSigningPosition) {
+    throw 'Signing target preparation must run before the credential-bearing signing step.'
+}
+
+$prepareSigningText = $signJobText.Substring(
+    $prepareSigningPosition,
+    $credentialSigningPosition - $prepareSigningPosition
+)
+Assert-NotContains -Text $prepareSigningText -Needle 'signing_push_token' -Name 'signing-target preparation has no branch-update secret'
+Assert-NotContains -Text $prepareSigningText -Needle 'SIGNING_PUSH_TOKEN' -Name 'signing-target preparation has no secret environment alias'
 
 $remoteCanonicalizationPosition = $signJobText.IndexOf('$expectedRemoteUrl =', [StringComparison]::Ordinal)
+$secretMaterializationPosition = $signJobText.IndexOf('SIGNING_PUSH_TOKEN:', [StringComparison]::Ordinal)
 $credentialEncodingPosition = $signJobText.IndexOf('$encodedCredential =', [StringComparison]::Ordinal)
 if ($remoteCanonicalizationPosition -lt 0 -or
+    $secretMaterializationPosition -lt 0 -or
     $credentialEncodingPosition -lt 0 -or
-    $remoteCanonicalizationPosition -ge $credentialEncodingPosition) {
-    throw 'Signing remote endpoint must be canonicalized before the write credential is materialized.'
+    $remoteCanonicalizationPosition -ge $secretMaterializationPosition -or
+    $secretMaterializationPosition -ge $credentialEncodingPosition) {
+    throw 'Signing endpoint validation must complete before the write credential is materialized and encoded.'
 }
 Write-Host '[PASS] signing endpoint is bound before write credential materialization'
 
