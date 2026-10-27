@@ -99,7 +99,7 @@ Assert-Contains -Text $workflow -Needle 'Verify isolated review runner security 
 Assert-Contains -Text $workflow -Needle 'inputs.signing_public_key_path' -Name 'signing key path is role-specific'
 Assert-Contains -Text $workflow -Needle 'inputs.review_trusted_public_key_path' -Name 'review verification key path is role-specific'
 Assert-NotContains -Text $workflow -Needle 'inputs.trusted_public_key_path' -Name 'shared signing/review key path is forbidden'
-Assert-Contains -Text $caller -Needle "review_trusted_public_key_path: 'C:\ProgramData\Antigravity-CI\trusted_signing_key.pub'" -Name 'caller uses a public-only review key location'
+Assert-Contains -Text $caller -Needle "review_trusted_public_key_path: 'REPLACE_WITH_REVIEW_PUBLIC_KEY_PATH'" -Name 'caller requires a deployment-specific public-only review key location'
 
 
 Assert-Contains -Text $workflow -Needle 'signing_runner_identity:' -Name 'signing runner identity is exported for review isolation'
@@ -145,3 +145,9 @@ Assert-Contains -Text $publisherJobText -Needle "if: inputs.reporter_app_client_
 Assert-Contains -Text $publisherJobText -Needle "if: inputs.reporter_app_client_id == ''" -Name 'fallback token publisher path is mutually exclusive'
 Assert-Contains -Text $caller -Needle 'reporter_app_client_id:' -Name 'caller exposes GitHub App reporter client ID'
 Assert-Contains -Text $caller -Needle 'reporter_app_private_key:' -Name 'caller maps GitHub App reporter private key explicitly'
+
+Assert-Contains -Text $caller -Needle 'REPLACE_WITH_INFRASTRUCTURE_REPOSITORY/.github/workflows/review.yml@REPLACE_WITH_PINNED_COMMIT_SHA' -Name 'caller template requires explicit infrastructure repository and immutable commit'
+Assert-Contains -Text $caller -Needle 'signing_runner_label: REPLACE_WITH_SIGNING_RUNNER_LABEL' -Name 'caller template requires a deployment-specific signing runner'
+Assert-Contains -Text $caller -Needle 'review_runner_label: REPLACE_WITH_REVIEW_RUNNER_LABEL' -Name 'caller template requires a deployment-specific review runner'
+Assert-Contains -Text $caller -Needle 'publisher_runner_label: REPLACE_WITH_PUBLISHER_RUNNER_LABEL' -Name 'caller template requires a deployment-specific publisher runner'
+Assert-Contains -Text $caller -Needle "expected_reporter_login: 'REPLACE_WITH_REPORTER_LOGIN'" -Name 'caller template requires a deployment-specific reporter identity'

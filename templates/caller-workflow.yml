@@ -10,14 +10,14 @@ permissions:
 jobs:
   review:
     if: github.event.pull_request.draft == false && github.event.pull_request.head.repo.full_name == github.repository
-    uses: Herzchens/Antigravity-CI/.github/workflows/review.yml@REPLACE_WITH_PINNED_COMMIT_SHA
+    uses: REPLACE_WITH_INFRASTRUCTURE_REPOSITORY/.github/workflows/review.yml@REPLACE_WITH_PINNED_COMMIT_SHA
     with:
-      signing_runner_label: antigravity-signing
-      review_runner_label: antigravity-review
-      publisher_runner_label: antigravity-publisher
-      signing_public_key_path: 'C:\Users\Herzchen\.ssh\id_ed25519.pub'
-      review_trusted_public_key_path: 'C:\ProgramData\Antigravity-CI\trusted_signing_key.pub'
-      expected_reporter_login: 'Herzchen-AGY[bot]'
+      signing_runner_label: REPLACE_WITH_SIGNING_RUNNER_LABEL
+      review_runner_label: REPLACE_WITH_REVIEW_RUNNER_LABEL
+      publisher_runner_label: REPLACE_WITH_PUBLISHER_RUNNER_LABEL
+      signing_public_key_path: 'REPLACE_WITH_SIGNING_PUBLIC_KEY_PATH'
+      review_trusted_public_key_path: 'REPLACE_WITH_REVIEW_PUBLIC_KEY_PATH'
+      expected_reporter_login: 'REPLACE_WITH_REPORTER_LOGIN'
       reporter_app_client_id: ${{ vars.ANTIGRAVITY_REPORTER_APP_CLIENT_ID }}
       agy_executable: agy
       print_timeout_seconds: 1200
