@@ -31,7 +31,16 @@ function ConvertTo-SafeHtmlText {
     $builder = [System.Text.StringBuilder]::new()
     foreach ($character in $text.ToCharArray()) {
         $codePoint = [int] $character
-        if ($character -eq [char]10 -or $character -eq [char]9 -or $codePoint -ge 32) {
+        $isBidiControl = (
+            $codePoint -eq 0x061C -or
+            $codePoint -eq 0x200E -or
+            $codePoint -eq 0x200F -or
+            ($codePoint -ge 0x202A -and $codePoint -le 0x202E) -or
+            ($codePoint -ge 0x2066 -and $codePoint -le 0x2069)
+        )
+
+        if (-not $isBidiControl -and
+            ($character -eq [char]10 -or $character -eq [char]9 -or $codePoint -ge 32)) {
             [void] $builder.Append($character)
         }
     }

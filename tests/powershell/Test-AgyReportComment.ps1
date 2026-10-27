@@ -52,7 +52,12 @@ if ($first.Body -notmatch [regex]::Escape($report.head_sha)) {
 Write-Host '[PASS] report comment is deterministic and exact-head attributed'
 
 $originalMarker = $first.Marker
-$report.summary = '<script>alert(1)</script> @Herzchens **markdown** [click](https://evil.invalid) # heading <!-- hidden -->'
+$report.summary = (
+    '<script>alert(1)</script> @Herzchens **markdown** [click](https://evil.invalid) # heading <!-- hidden -->' +
+    [char]0x202E +
+    'bidi-spoof' +
+    [char]0x2066
+)
 $report.findings[0].title = 'title | @team <b>html</b> **bold**'
 $report.findings[0].evidence = 'evidence with *emphasis*, [link](https://evil.invalid), and @everyone'
 $report.findings[0].path = 'src/<unsafe>|file.ps1'
@@ -72,6 +77,12 @@ $neutralizedMention = '@' + [char]0x200B + 'Herzchens'
 if ($hostile.Body -notmatch '&lt;script&gt;' -or
     -not $hostile.Body.Contains($neutralizedMention)) {
     throw 'Expected escaped or mention-neutralized content was not present.'
+}
+
+foreach ($bidiControl in @([char]0x202E, [char]0x2066, [char]0x061C, [char]0x200F)) {
+    if ($hostile.Body.Contains([string] $bidiControl, [StringComparison]::Ordinal)) {
+        throw 'Unicode bidi control survived report-comment sanitization.'
+    }
 }
 
 if ($hostile.Marker -ne $originalMarker) {

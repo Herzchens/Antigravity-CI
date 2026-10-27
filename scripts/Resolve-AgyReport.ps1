@@ -30,6 +30,35 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
+function Assert-NoDuplicateJsonProperties {
+    param(
+        [Parameter(Mandatory)]
+        [System.Text.Json.JsonElement] $Element
+    )
+
+    if ($Element.ValueKind -eq [System.Text.Json.JsonValueKind]::Object) {
+        $seen = [System.Collections.Generic.HashSet[string]]::new(
+            [System.StringComparer]::Ordinal
+        )
+
+        foreach ($property in $Element.EnumerateObject()) {
+            if (-not $seen.Add($property.Name)) {
+                throw 'AGY report contains a duplicate JSON property.'
+            }
+
+            Assert-NoDuplicateJsonProperties -Element $property.Value
+        }
+
+        return
+    }
+
+    if ($Element.ValueKind -eq [System.Text.Json.JsonValueKind]::Array) {
+        foreach ($item in $Element.EnumerateArray()) {
+            Assert-NoDuplicateJsonProperties -Element $item
+        }
+    }
+}
+
 $null = Get-Command Test-Json -ErrorAction Stop
 
 $resolvedReportPath = (Resolve-Path -LiteralPath $ReportPath -ErrorAction Stop).Path
@@ -37,6 +66,10 @@ $reportItem = Get-Item -LiteralPath $resolvedReportPath -ErrorAction Stop
 
 if ($reportItem.PSIsContainer) {
     throw 'AGY report path must reference a file.'
+}
+
+if (($reportItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+    throw 'AGY report path must not be a symbolic link or reparse point.'
 }
 
 if ($reportItem.Length -gt $MaxBytes) {
@@ -48,7 +81,31 @@ if ([string]::IsNullOrWhiteSpace($SchemaPath)) {
 }
 
 $resolvedSchemaPath = (Resolve-Path -LiteralPath $SchemaPath -ErrorAction Stop).Path
-$reportJson = Get-Content -LiteralPath $resolvedReportPath -Raw -Encoding utf8
+
+$reportBytes = [System.IO.File]::ReadAllBytes($resolvedReportPath)
+$strictUtf8 = [System.Text.UTF8Encoding]::new($false, $true)
+
+try {
+    $reportJson = $strictUtf8.GetString($reportBytes)
+}
+catch [System.Text.DecoderFallbackException] {
+    throw 'AGY report is not valid UTF-8.'
+}
+
+$jsonDocument = $null
+try {
+    $jsonOptions = [System.Text.Json.JsonDocumentOptions]::new()
+    $jsonDocument = [System.Text.Json.JsonDocument]::Parse($reportJson, $jsonOptions)
+    Assert-NoDuplicateJsonProperties -Element $jsonDocument.RootElement
+}
+catch [System.Text.Json.JsonException] {
+    throw 'AGY report is not valid JSON.'
+}
+finally {
+    if ($null -ne $jsonDocument) {
+        $jsonDocument.Dispose()
+    }
+}
 
 $matchesSchema = [bool](
     Test-Json -Json $reportJson -SchemaFile $resolvedSchemaPath -ErrorAction SilentlyContinue

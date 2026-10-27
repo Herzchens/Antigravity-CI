@@ -187,6 +187,23 @@ try {
         & $gate @unsafeRefParameters
     }
 
+    foreach ($unsafeBranch in @(
+        '@',
+        '-danger',
+        'feat/component.lock'
+    )) {
+        $gitRulePath = Join-Path $tempRoot ('git-rule-' + [Guid]::NewGuid().ToString('N') + '.json')
+        Write-EventFixture -Path $gitRulePath -Overrides @{
+            head_ref = $unsafeBranch
+        }
+
+        $gitRuleParameters = $common.Clone()
+        $gitRuleParameters.EventPath = $gitRulePath
+        Assert-Throws -Name "Git-invalid branch ref '$unsafeBranch' is rejected" -Action {
+            & $gate @gitRuleParameters
+        }
+    }
+
     $sameShaPath = Join-Path $tempRoot 'same-sha.json'
     Write-EventFixture -Path $sameShaPath -Overrides @{
         head_sha = '1111111111111111111111111111111111111111'

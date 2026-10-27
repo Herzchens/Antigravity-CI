@@ -110,6 +110,65 @@ try {
     Assert-Throws -Name 'oversize report is rejected before parsing' -Action {
         & $resolver @oversizeParameters
     }
+
+    $duplicatePath = Join-Path $tempRoot 'duplicate.json'
+    $compactReport = (
+        Get-Content -LiteralPath $validFixture -Raw -Encoding utf8 |
+        ConvertFrom-Json -Depth 32 |
+        ConvertTo-Json -Depth 32 -Compress
+    )
+    $duplicateNeedle = '"head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"'
+    $duplicateReplacement = '"head_sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"'
+
+    if (-not $compactReport.Contains($duplicateNeedle, [StringComparison]::Ordinal)) {
+        throw 'Duplicate-property fixture could not locate head_sha.'
+    }
+
+    $duplicateReport = $compactReport.Replace($duplicateNeedle, $duplicateReplacement)
+    [System.IO.File]::WriteAllText(
+        $duplicatePath,
+        $duplicateReport,
+        [System.Text.UTF8Encoding]::new($false)
+    )
+
+    $duplicateParameters = $expected.Clone()
+    $duplicateParameters.ReportPath = $duplicatePath
+
+    Assert-Throws -Name 'duplicate JSON properties are rejected before object conversion' -Action {
+        & $resolver @duplicateParameters
+    }
+
+    $invalidUtf8Path = Join-Path $tempRoot 'invalid-utf8.json'
+    [System.IO.File]::WriteAllBytes(
+        $invalidUtf8Path,
+        [byte[]] @(0x7B, 0x22, 0x78, 0x22, 0x3A, 0xFF, 0x7D)
+    )
+
+    $invalidUtf8Parameters = $expected.Clone()
+    $invalidUtf8Parameters.ReportPath = $invalidUtf8Path
+
+    Assert-Throws -Name 'invalid UTF-8 report bytes are rejected' -Action {
+        & $resolver @invalidUtf8Parameters
+    }
+
+    $symlinkPath = Join-Path $tempRoot 'report-link.json'
+    $symlinkCreated = $false
+    try {
+        New-Item -ItemType SymbolicLink -Path $symlinkPath -Target $validFixture -ErrorAction Stop | Out-Null
+        $symlinkCreated = $true
+    }
+    catch {
+        Write-Host '[SKIP] symbolic-link fixture is unavailable on this host'
+    }
+
+    if ($symlinkCreated) {
+        $symlinkParameters = $expected.Clone()
+        $symlinkParameters.ReportPath = $symlinkPath
+
+        Assert-Throws -Name 'symbolic-link report path is rejected' -Action {
+            & $resolver @symlinkParameters
+        }
+    }
 }
 finally {
     if (Test-Path -LiteralPath $tempRoot) {

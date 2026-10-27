@@ -82,19 +82,21 @@ function Assert-SafeRefName {
 
     $ref = Assert-RequiredString -Value $Value -Name $Name -MaxLength 255
 
-    if ($ref -match '[\x00-\x20\x7f~^:?*\[\\]' -or
+    if ($ref -ceq '@' -or
+        $ref.StartsWith('-', [StringComparison]::Ordinal) -or
+        $ref -match '[\x00-\x20\x7f~^:?*\[\\]' -or
         $ref.Contains('..', [StringComparison]::Ordinal) -or
         $ref.Contains('@{', [StringComparison]::Ordinal) -or
         $ref.StartsWith('/', [StringComparison]::Ordinal) -or
         $ref.EndsWith('/', [StringComparison]::Ordinal) -or
-        $ref.EndsWith('.', [StringComparison]::Ordinal) -or
-        $ref.EndsWith('.lock', [StringComparison]::OrdinalIgnoreCase)) {
+        $ref.EndsWith('.', [StringComparison]::Ordinal)) {
         throw "Pull-request event field '$Name' is not a safe Git branch ref."
     }
 
     foreach ($component in $ref.Split('/')) {
         if ([string]::IsNullOrWhiteSpace($component) -or
-            $component.StartsWith('.', [StringComparison]::Ordinal)) {
+            $component.StartsWith('.', [StringComparison]::Ordinal) -or
+            $component.EndsWith('.lock', [StringComparison]::OrdinalIgnoreCase)) {
             throw "Pull-request event field '$Name' is not a safe Git branch ref."
         }
     }
