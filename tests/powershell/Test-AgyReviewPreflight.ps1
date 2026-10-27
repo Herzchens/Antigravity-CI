@@ -298,6 +298,64 @@ pwsh -NoProfile -File "$fakeScript"
         Write-Host '[PASS] sensitive runner environment is stripped from AGY'
         Write-Host '[PASS] Git control-plane mutation prevents final report publication'
 
+        $deniedScript = Join-Path $tempRoot 'denied-agy.ps1'
+        $deniedCommand = Join-Path $tempRoot 'denied-agy.cmd'
+        $deniedOutput = Join-Path $outside 'denied-report.json'
+
+        $deniedBody = @'
+$report = [ordered]@{
+    schema_version = 1
+    repo = 'Herzchens/Example'
+    pr = 42
+    head_sha = '__HEAD_SHA__'
+    run_id = 'preflight'
+    generated_at = '2026-10-27T07:00:00Z'
+    result = 'passed'
+    summary = 'apparently valid but incomplete'
+    tests = @()
+    findings = @()
+    limitations = @()
+    tool_failures = @()
+}
+
+[ordered]@{
+    conversation_id = 'fake-denied'
+    status = 'SUCCESS'
+    response = ''
+    structured_output = $report
+    denied_actions = @(
+        [ordered]@{ action = 'command'; display_name = 'RunCommand' }
+    )
+    duration_seconds = 0
+    num_turns = 1
+    usage = @{}
+} | ConvertTo-Json -Depth 32 -Compress
+'@
+
+        $deniedBody = $deniedBody.Replace('__HEAD_SHA__', $head)
+        Set-Content -LiteralPath $deniedScript -Value $deniedBody -Encoding utf8NoBOM
+        @"
+@echo off
+pwsh -NoProfile -File "$deniedScript"
+"@ | Set-Content -LiteralPath $deniedCommand -Encoding ascii
+
+        $deniedParameters = $baseParameters.Clone()
+        $deniedParameters.AgyExecutable = $deniedCommand
+        $deniedParameters.ExpectedAgySha256 = (
+            Get-FileHash -LiteralPath $deniedCommand -Algorithm SHA256 -ErrorAction Stop
+        ).Hash.ToLowerInvariant()
+        $deniedParameters.OutputPath = $deniedOutput
+
+        Assert-Throws -Name 'SUCCESS envelope with denied_actions is rejected' -Action {
+            & $runner @deniedParameters
+        }
+
+        if (Test-Path -LiteralPath $deniedOutput) {
+            throw 'Permission-denied AGY run left a publishable final report.'
+        }
+
+        Write-Host '[PASS] denied tool actions invalidate otherwise valid structured output'
+
         $hostMutationScript = Join-Path $tempRoot 'host-mutation-agy.ps1'
         $hostMutationCommand = Join-Path $tempRoot 'host-mutation-agy.cmd'
         $hostMutationOutput = Join-Path $outside 'host-mutation-report.json'

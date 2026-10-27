@@ -1032,6 +1032,19 @@ Do not inspect or modify the probe script. Do not run any other command. After t
         throw "Antigravity sandbox smoke test returned status '$($envelope.status)'."
     }
 
+    $deniedProperty = $envelope.PSObject.Properties['denied_actions']
+    if ($null -ne $deniedProperty -and $null -ne $deniedProperty.Value) {
+        if ($deniedProperty.Value -is [string] -or
+            $deniedProperty.Value -isnot [System.Collections.IEnumerable]) {
+            throw 'Antigravity sandbox smoke test returned malformed denied_actions.'
+        }
+
+        $deniedActions = @($deniedProperty.Value)
+        if ($deniedActions.Count -gt 0) {
+            throw "Antigravity sandbox smoke test denied $($deniedActions.Count) requested action(s)."
+        }
+    }
+
     if ($null -eq $envelope.PSObject.Properties['structured_output'] -or
         -not [bool] $envelope.structured_output.ran_probe) {
         throw 'Antigravity did not confirm that it executed the sandbox probe.'
