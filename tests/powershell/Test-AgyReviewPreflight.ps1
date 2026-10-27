@@ -363,6 +363,75 @@ pwsh -NoProfile -File "$hostMutationScript"
 
         Write-Host '[PASS] Antigravity project-settings persistence prevents final report publication'
 
+        $remoteMutationScript = Join-Path $tempRoot 'remote-control-mutation-agy.ps1'
+        $remoteMutationCommand = Join-Path $tempRoot 'remote-control-mutation-agy.cmd'
+        $remoteMutationOutput = Join-Path $outside 'remote-control-mutation-report.json'
+        $remoteConfigPath = Join-Path $fakeHome '.gemini\config\config.json'
+
+        $remoteMutationBody = @'
+$ErrorActionPreference = 'Stop'
+$configPath = '__REMOTE_CONFIG__'
+New-Item -ItemType Directory -Path (Split-Path -Parent $configPath) -Force | Out-Null
+[ordered]@{
+    userSettings = [ordered]@{
+        cliRemoteControlHostname = 'persistence-attempt'
+    }
+} | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $configPath -Encoding utf8NoBOM
+
+$report = [ordered]@{
+    schema_version = 1
+    repo = 'Herzchens/Example'
+    pr = 42
+    head_sha = '__HEAD_SHA__'
+    run_id = 'preflight'
+    generated_at = '2026-10-27T07:00:00Z'
+    result = 'passed'
+    summary = 'fake'
+    tests = @()
+    findings = @()
+    limitations = @()
+    tool_failures = @()
+}
+
+[ordered]@{
+    conversation_id = 'fake-remote-control-mutation'
+    status = 'SUCCESS'
+    response = ''
+    structured_output = $report
+    duration_seconds = 0
+    num_turns = 1
+    usage = @{}
+} | ConvertTo-Json -Depth 32 -Compress
+'@
+
+        $remoteMutationBody = $remoteMutationBody.Replace('__REMOTE_CONFIG__', $remoteConfigPath.Replace("'", "''"))
+        $remoteMutationBody = $remoteMutationBody.Replace('__HEAD_SHA__', $head)
+        Set-Content -LiteralPath $remoteMutationScript -Value $remoteMutationBody -Encoding utf8NoBOM
+
+        @"
+@echo off
+pwsh -NoProfile -File "$remoteMutationScript"
+"@ | Set-Content -LiteralPath $remoteMutationCommand -Encoding ascii
+
+        $remoteMutationParameters = $baseParameters.Clone()
+        $remoteMutationParameters.AgyExecutable = $remoteMutationCommand
+        $remoteMutationParameters.ExpectedAgySha256 = (
+            Get-FileHash -LiteralPath $remoteMutationCommand -Algorithm SHA256 -ErrorAction Stop
+        ).Hash.ToLowerInvariant()
+        $remoteMutationParameters.OutputPath = $remoteMutationOutput
+
+        Assert-Throws -Name 'Antigravity Remote Control persistence invalidates the run' -Action {
+            & $runner @remoteMutationParameters
+        }
+
+        if (Test-Path -LiteralPath $remoteMutationOutput) {
+            throw 'Remote-Control-mutating AGY run left a publishable final report.'
+        }
+
+        Remove-Item -LiteralPath $remoteConfigPath -Force -ErrorAction SilentlyContinue
+
+        Write-Host '[PASS] Remote Control persistence prevents final report publication'
+
         $floodScript = Join-Path $tempRoot 'flood-agy.ps1'
         $floodCommand = Join-Path $tempRoot 'flood-agy.cmd'
         $floodOutput = Join-Path $outside 'flood-report.json'

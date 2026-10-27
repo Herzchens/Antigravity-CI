@@ -231,11 +231,28 @@ exit /b 2
     if (-not $review.Valid -or
         $review.IsElevated -or
         $review.TrustedKeyFingerprint -ne $fingerprint -or
-        $review.ProtectedReadProbeCount -ne 1) {
+        $review.ProtectedReadProbeCount -ne 1 -or
+        -not $review.RemoteControlPolicyValid) {
         throw 'Clean review fixture did not pass the runner-security preflight.'
     }
 
     Write-Host '[PASS] isolated review account fixture passes with public key only'
+
+    $remoteConfigDirectory = Join-Path $fakeHome '.gemini\config'
+    $remoteConfigPath = Join-Path $remoteConfigDirectory 'config.json'
+    New-Item -ItemType Directory -Path $remoteConfigDirectory -Force | Out-Null
+    [ordered]@{
+        userSettings = [ordered]@{
+            cliRemoteControlHostname = 'fixture-review-runner'
+        }
+    } | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $remoteConfigPath -Encoding utf8NoBOM
+
+    Assert-Throws -Name 'review role rejects persisted Antigravity Remote Control state' -Action {
+        & $preflight @reviewParameters
+    }
+    Remove-Item -LiteralPath $remoteConfigPath -Force
+
+    Write-Host '[PASS] review role rejects Remote Control state before AGY execution'
 
     $env:AGY_ADC_AUTH = 'true'
     Assert-Throws -Name 'review role rejects ambient Antigravity ADC authentication' -Action {
