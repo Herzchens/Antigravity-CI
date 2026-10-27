@@ -173,7 +173,6 @@ function Assert-GitIsolation {
         HooksPath = $hooksPath
         AttributesPath = $attributesPath
         TemplateDirectory = $templatePath
-        GitIsolationValid = ($null -ne $gitIsolation -and $gitIsolation.Valid)
         Valid = $true
     }
 }
@@ -223,6 +222,22 @@ if (-not $IsWindows) {
 
 if ([Environment]::OSVersion.Version.Build -lt $MinimumWindowsBuild) {
     throw "Windows build $([Environment]::OSVersion.Version.Build) is below the configured sandbox baseline $MinimumWindowsBuild."
+}
+
+$windowsIdentity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+try {
+    $windowsPrincipal = [System.Security.Principal.WindowsPrincipal]::new($windowsIdentity)
+    $administratorsSid = [System.Security.Principal.SecurityIdentifier]::new(
+        [System.Security.Principal.WellKnownSidType]::BuiltinAdministratorsSid,
+        $null
+    )
+
+    if ($windowsPrincipal.IsInRole($administratorsSid)) {
+        throw "Runner role '$Role' must not execute with an elevated Administrator token."
+    }
+}
+finally {
+    $windowsIdentity.Dispose()
 }
 
 $null = Get-Command git -ErrorAction Stop
@@ -301,6 +316,7 @@ if ($Role -eq 'Signing') {
         WindowsBuild = [Environment]::OSVersion.Version.Build
         User = [Environment]::UserName
         Identity = $runnerIdentity
+        IsElevated = $false
         TrustedKeyFingerprint = $trustedFingerprint
         TrustedKeyLoaded = $true
         GitIsolationValid = ($null -ne $gitIsolation -and $gitIsolation.Valid)
@@ -367,6 +383,7 @@ if ($Role -eq 'Publisher') {
         WindowsBuild = [Environment]::OSVersion.Version.Build
         User = [Environment]::UserName
         Identity = $runnerIdentity
+        IsElevated = $false
         SshAgentIdentityCount = $agentKeys.Count
         GitIsolationValid = ($null -ne $gitIsolation -and $gitIsolation.Valid)
         Valid = $true

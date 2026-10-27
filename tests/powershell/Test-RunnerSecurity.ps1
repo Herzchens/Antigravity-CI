@@ -11,6 +11,22 @@ if (-not $IsWindows) {
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $preflight = Join-Path $repoRoot 'scripts\Assert-RunnerSecurity.ps1'
 
+$testIdentity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+try {
+    $testPrincipal = [System.Security.Principal.WindowsPrincipal]::new($testIdentity)
+    $testAdministratorsSid = [System.Security.Principal.SecurityIdentifier]::new(
+        [System.Security.Principal.WellKnownSidType]::BuiltinAdministratorsSid,
+        $null
+    )
+
+    if ($testPrincipal.IsInRole($testAdministratorsSid)) {
+        throw 'Runner security fixtures must be executed from a non-elevated PowerShell session.'
+    }
+}
+finally {
+    $testIdentity.Dispose()
+}
+
 function Assert-Throws {
     param(
         [Parameter(Mandatory)]
@@ -197,6 +213,7 @@ exit /b 2
     $review = & $preflight @reviewParameters
 
     if (-not $review.Valid -or
+        $review.IsElevated -or
         $review.TrustedKeyFingerprint -ne $fingerprint -or
         $review.ProtectedReadProbeCount -ne 1) {
         throw 'Clean review fixture did not pass the runner-security preflight.'
@@ -231,7 +248,7 @@ exit /b 2
 
     $publisher = & $preflight @publisherParameters
 
-    if (-not $publisher.Valid -or $publisher.Role -ne 'Publisher') {
+    if (-not $publisher.Valid -or $publisher.IsElevated -or $publisher.Role -ne 'Publisher') {
         throw 'Clean publisher fixture did not pass the runner-security preflight.'
     }
 
@@ -294,12 +311,14 @@ exit /b 0
     $signing = & $preflight @signingParameters
 
     if (-not $signing.Valid -or
+        $signing.IsElevated -or
         -not $signing.TrustedKeyLoaded -or
         $signing.TrustedKeyFingerprint -ne $fingerprint) {
         throw 'Signing fixture did not pass expected security checks.'
     }
 
     Write-Host '[PASS] signing role requires the trusted key in its SSH agent without ambient signing config'
+    Write-Host '[PASS] all runner roles require a non-elevated Windows token'
 }
 finally {
     foreach ($aclPath in @($protectedSentinel, $protectedDirectory, $probeManifest, $policyDirectory)) {

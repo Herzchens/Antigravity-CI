@@ -8,6 +8,8 @@ Every privileged job first replaces system/global Git configuration with a fresh
 
 The signing runner owns the only private signing key. Keep the private key on the machine and load it through the Windows OpenSSH agent; do not place the private key or its passphrase in GitHub secrets. The workflow receives only the public-key path plus a dedicated branch-update credential. The write credential is scoped to the signing step and is not persisted by checkout.
 
+Run the signing runner service/process with a standard, non-elevated Windows token. Membership in the local Administrators group is acceptable only when UAC leaves the runner process on its standard-user token; the security preflight rejects an actually elevated Administrator token.
+
 ## Antigravity runtime pinning
 
 Treat the Antigravity CLI executable as privileged review infrastructure, not as reviewed code. After every deliberate install or upgrade, resolve and record the exact executable SHA-256:
@@ -24,6 +26,8 @@ Pass that 64-character hash as `AgySha256` when generating the caller workflow. 
 The review runner receives only a public copy of the trusted signing key. It must not have access to the signing account, SSH agent, publisher credential, or GitHub write credentials. Production deployments should prefer an ephemeral self-hosted review runner so one job receives a clean machine state. GitHub explicitly warns that persistent self-hosted runners can be persistently compromised by untrusted workflow code and recommends ephemeral runners for autoscaling.
 
 For an initial persistent Windows pilot, use a dedicated low-privilege Windows account, a dedicated runner label, the sandbox smoke test, workspace cleanup, capability ceilings, and the Windows kill-on-close process job. These controls are defense in depth; they do not turn a persistent runner into an ephemeral isolation boundary.
+
+The review and publisher runner processes must also remain non-elevated. Do not install their runner services as LocalSystem or run them from an elevated terminal.
 
 ## Publisher runner
 
