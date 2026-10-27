@@ -169,6 +169,8 @@ $runRegistrySubKey = 'Software\Microsoft\Windows\CurrentVersion\Run'
 $runValueName = 'Antigravity-CI-Sandbox-Smoke-' + $testId
 $controlRunValueName = 'Antigravity-CI-Sandbox-Control-' + $testId
 $runValueData = '"' + (Join-Path $env:SystemRoot 'System32\cmd.exe') + '" /c exit 0'
+$hostRegistryRunWriteAllowed = $false
+$hostRegistryRunControlError = $null
 $userEnvironmentName = 'ANTIGRAVITY_CI_SANDBOX_SMOKE_' + $testId.ToUpperInvariant()
 $userEnvironmentValue = [Guid]::NewGuid().ToString('N') + [Guid]::NewGuid().ToString('N')
 $hostUserEnvironmentWriteAllowed = $false
@@ -216,12 +218,13 @@ try {
         }
     }
 
-    $hostRunKey = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($runRegistrySubKey, $true)
-    if ($null -eq $hostRunKey) {
-        throw 'Host review account cannot open the HKCU Run key for the registry persistence control fixture.'
-    }
-
+    $hostRunKey = $null
     try {
+        $hostRunKey = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($runRegistrySubKey, $true)
+        if ($null -eq $hostRunKey) {
+            throw 'HKCU Run key is not writable by the review account.'
+        }
+
         $hostRunKey.SetValue(
             $controlRunValueName,
             $runValueData,
@@ -229,14 +232,23 @@ try {
         )
 
         $controlValue = [string] $hostRunKey.GetValue($controlRunValueName, $null)
-        if ($controlValue -cne $runValueData) {
-            throw 'Host review account could not verify the HKCU Run control fixture.'
+        if ($controlValue -ceq $runValueData) {
+            $hostRegistryRunWriteAllowed = $true
         }
-
-        $hostRunKey.DeleteValue($controlRunValueName, $false)
+    }
+    catch {
+        $hostRegistryRunControlError = $_.Exception.GetType().FullName
     }
     finally {
-        $hostRunKey.Dispose()
+        if ($null -ne $hostRunKey) {
+            try {
+                $hostRunKey.DeleteValue($controlRunValueName, $false)
+            }
+            catch {
+            }
+
+            $hostRunKey.Dispose()
+        }
     }
 
     try {
@@ -763,6 +775,9 @@ Do not inspect or modify the probe script. Do not run any other command. After t
         HostTaskSchedulerControlExitCode = $hostTaskSchedulerControlExitCode
         ScheduledTaskBoundary = if ($hostTaskSchedulerRegistrationAllowed) { 'sandbox' } else { 'host-account-policy' }
         RegistryRunPersistenceBlocked = $true
+        HostRegistryRunWriteAllowed = $hostRegistryRunWriteAllowed
+        HostRegistryRunControlError = $hostRegistryRunControlError
+        RegistryRunBoundary = if ($hostRegistryRunWriteAllowed) { 'sandbox' } else { 'host-account-policy' }
         UserEnvironmentPersistenceBlocked = $true
         HostUserEnvironmentWriteAllowed = $hostUserEnvironmentWriteAllowed
         HostUserEnvironmentControlError = $hostUserEnvironmentControlError
