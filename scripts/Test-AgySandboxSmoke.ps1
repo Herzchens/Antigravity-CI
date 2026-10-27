@@ -97,6 +97,38 @@ public static class AntigravityCiCredentialSentinel
         }
     }
 
+    public static bool Write(string target, string userName, string secret)
+    {
+        byte[] blob = Encoding.Unicode.GetBytes(secret);
+        IntPtr blobPointer = Marshal.AllocCoTaskMem(blob.Length);
+
+        try
+        {
+            Marshal.Copy(blob, 0, blobPointer, blob.Length);
+
+            CREDENTIAL credential = new CREDENTIAL
+            {
+                Flags = 0,
+                Type = 1,
+                TargetName = target,
+                Comment = "Antigravity-CI sandbox write probe",
+                CredentialBlobSize = (UInt32)blob.Length,
+                CredentialBlob = blobPointer,
+                Persist = 1,
+                AttributeCount = 0,
+                Attributes = IntPtr.Zero,
+                TargetAlias = null,
+                UserName = userName
+            };
+
+            return CredWrite(ref credential, 0);
+        }
+        finally
+        {
+            Marshal.FreeCoTaskMem(blobPointer);
+        }
+    }
+
     public static bool CanRead(string target)
     {
         IntPtr credential = IntPtr.Zero;
@@ -163,6 +195,8 @@ $secretValue = [Guid]::NewGuid().ToString('N') + [Guid]::NewGuid().ToString('N')
 $credentialTarget = 'Antigravity-CI-Sandbox-Smoke-' + $testId
 $credentialValue = [Guid]::NewGuid().ToString('N') + [Guid]::NewGuid().ToString('N')
 $credentialCreated = $false
+$credentialWriteTarget = 'Antigravity-CI-Sandbox-Write-' + $testId
+$credentialWriteValue = [Guid]::NewGuid().ToString('N') + [Guid]::NewGuid().ToString('N')
 $taskName = 'Antigravity-CI-Sandbox-Smoke-' + $testId
 $controlTaskName = 'Antigravity-CI-Sandbox-Control-' + $testId
 $runRegistrySubKey = 'Software\Microsoft\Windows\CurrentVersion\Run'
@@ -285,6 +319,8 @@ try {
     $escapedSecretPath = $secretPath.Replace("'", "''")
     $escapedWritePath = $outsideWritePath.Replace("'", "''")
     $escapedCredentialTarget = $credentialTarget.Replace("'", "''")
+    $escapedCredentialWriteTarget = $credentialWriteTarget.Replace("'", "''")
+    $escapedCredentialWriteValue = $credentialWriteValue.Replace("'", "''")
     $escapedTaskName = $taskName.Replace("'", "''")
     $escapedRunValueName = $runValueName.Replace("'", "''")
     $escapedRunValueData = $runValueData.Replace("'", "''")
@@ -304,6 +340,8 @@ $result = [ordered]@{
     network_succeeded = $false
     credential_probe_completed = $false
     credential_read_succeeded = $false
+    credential_write_probe_completed = $false
+    credential_write_succeeded = $false
     scheduled_task_probe_completed = $false
     scheduled_task_create_succeeded = $false
     registry_probe_completed = $false
@@ -335,9 +373,31 @@ try {
     Add-Type -TypeDefinition @"
 using System;
 using System.Runtime.InteropServices;
+using System.Runtime.InteropServices.ComTypes;
+using System.Text;
 
 public static class AntigravityCiCredentialProbe
 {
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private struct CREDENTIAL
+    {
+        public UInt32 Flags;
+        public UInt32 Type;
+        [MarshalAs(UnmanagedType.LPWStr)] public string TargetName;
+        [MarshalAs(UnmanagedType.LPWStr)] public string Comment;
+        public FILETIME LastWritten;
+        public UInt32 CredentialBlobSize;
+        public IntPtr CredentialBlob;
+        public UInt32 Persist;
+        public UInt32 AttributeCount;
+        public IntPtr Attributes;
+        [MarshalAs(UnmanagedType.LPWStr)] public string TargetAlias;
+        [MarshalAs(UnmanagedType.LPWStr)] public string UserName;
+    }
+
+    [DllImport("Advapi32.dll", EntryPoint = "CredWriteW", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern bool CredWrite(ref CREDENTIAL credential, UInt32 flags);
+
     [DllImport("Advapi32.dll", EntryPoint = "CredReadW", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern bool CredRead(string target, UInt32 type, UInt32 flags, out IntPtr credential);
 
@@ -364,6 +424,20 @@ public static class AntigravityCiCredentialProbe
 }
 catch {
     $result.credential_probe_error = $_.Exception.GetType().FullName
+}
+
+try {
+    $result.credential_write_succeeded = [AntigravityCiCredentialProbe]::Write(
+        '__CREDENTIAL_WRITE_TARGET__',
+        'antigravity-ci-sandbox-write',
+        '__CREDENTIAL_WRITE_VALUE__'
+    )
+}
+catch {
+    $result.credential_write_probe_error = $_.Exception.GetType().FullName
+}
+finally {
+    $result.credential_write_probe_completed = $true
 }
 
 try {
@@ -445,6 +519,8 @@ $result |
     $probe = $probe.Replace('__SECRET_PATH__', $escapedSecretPath)
     $probe = $probe.Replace('__WRITE_PATH__', $escapedWritePath)
     $probe = $probe.Replace('__CREDENTIAL_TARGET__', $escapedCredentialTarget)
+    $probe = $probe.Replace('__CREDENTIAL_WRITE_TARGET__', $escapedCredentialWriteTarget)
+    $probe = $probe.Replace('__CREDENTIAL_WRITE_VALUE__', $escapedCredentialWriteValue)
     $probe = $probe.Replace('__TASK_NAME__', $escapedTaskName)
     $probe = $probe.Replace('__RUN_VALUE_NAME__', $escapedRunValueName)
     $probe = $probe.Replace('__RUN_VALUE_DATA__', $escapedRunValueData)
@@ -713,6 +789,15 @@ Do not inspect or modify the probe script. Do not run any other command. After t
         throw 'Sandbox allowed a command to read a Generic Credential from the review account Windows Credential Manager.'
     }
 
+    if (-not [bool] $probeResult.credential_write_probe_completed) {
+        throw 'Sandbox Credential Manager write probe did not complete; credential persistence isolation was not proven.'
+    }
+
+    $persistedCredentialWriteTarget = [AntigravityCiCredentialSentinel]::CanRead($credentialWriteTarget)
+    if ([bool] $probeResult.credential_write_succeeded -or $persistedCredentialWriteTarget) {
+        throw 'Sandbox allowed a command to persist a Generic Credential in the review account Windows Credential Manager.'
+    }
+
     if (-not [bool] $probeResult.scheduled_task_probe_completed) {
         throw 'Sandbox Task Scheduler probe did not complete; scheduler isolation was not proven.'
     }
@@ -770,6 +855,7 @@ Do not inspect or modify the probe script. Do not run any other command. After t
         OutsideReadBlocked = $true
         OutsideWriteBlocked = $true
         CredentialManagerReadBlocked = $true
+        CredentialManagerWriteBlocked = $true
         ScheduledTaskRegistrationBlocked = $true
         HostTaskSchedulerRegistrationAllowed = $hostTaskSchedulerRegistrationAllowed
         HostTaskSchedulerControlExitCode = $hostTaskSchedulerControlExitCode
@@ -819,6 +905,12 @@ finally {
         }
         catch {
         }
+    }
+
+    try {
+        [AntigravityCiCredentialSentinel]::Delete($credentialWriteTarget)
+    }
+    catch {
     }
 
     try {
