@@ -226,6 +226,17 @@ jobs:
             throw 'Unable to resolve the PR merge base.'
           }
 
+          $expectedRemoteUrl = 'https://github.com/' + $context.Repository + '.git'
+          & git -C $env:TARGET_PATH remote set-url origin $expectedRemoteUrl
+          if ($LASTEXITCODE -ne 0) {
+            throw 'Unable to canonicalize the signing checkout origin URL.'
+          }
+
+          $configuredPushUrls = @(& git -C $env:TARGET_PATH config --local --get-all remote.origin.pushurl 2>$null)
+          if ($LASTEXITCODE -eq 0 -and $configuredPushUrls.Count -gt 0) {
+            throw 'Signing checkout must not configure a separate origin pushurl.'
+          }
+
           if ([string]::IsNullOrWhiteSpace($env:SIGNING_PUSH_TOKEN)) {
             throw 'Dedicated signing push token is missing.'
           }
@@ -259,6 +270,7 @@ jobs:
               -TrustedPublicKey $env:TRUSTED_PUBLIC_KEY_PATH `
               -SigningKey $env:TRUSTED_PUBLIC_KEY_PATH `
               -ExpectedRemoteHead $context.HeadSha `
+              -ExpectedRemoteUrl $expectedRemoteUrl `
               -Push
           }
           finally {

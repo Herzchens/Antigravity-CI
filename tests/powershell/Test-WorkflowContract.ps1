@@ -177,6 +177,18 @@ Assert-Contains -Text $workflow -Needle ('SIGNING_PUSH_TOKEN: $' + '{{ secrets.s
 Assert-NotContains -Text $workflow -Needle ('token: $' + '{{ secrets.signing_push_token }}') -Name 'signing write credential is never persisted by checkout'
 Assert-Contains -Text $workflow -Needle 'http.https://github.com/.extraheader' -Name 'signing push authentication is process-scoped'
 Assert-Contains -Text $workflow -Needle '$env:SIGNING_PUSH_TOKEN = $null' -Name 'signing token variable is cleared after use'
+Assert-Contains -Text $signJobText -Needle "$expectedRemoteUrl = 'https://github.com/' + $context.Repository + '.git'" -Name 'signing canonicalizes origin to the trusted GitHub repository'
+Assert-Contains -Text $signJobText -Needle 'remote.origin.pushurl' -Name 'signing rejects a separate push endpoint'
+Assert-Contains -Text $signJobText -Needle '-ExpectedRemoteUrl $expectedRemoteUrl' -Name 'signing gate binds fetch and push to the canonical endpoint'
+
+$remoteCanonicalizationPosition = $signJobText.IndexOf('$expectedRemoteUrl =', [StringComparison]::Ordinal)
+$credentialEncodingPosition = $signJobText.IndexOf('$encodedCredential =', [StringComparison]::Ordinal)
+if ($remoteCanonicalizationPosition -lt 0 -or
+    $credentialEncodingPosition -lt 0 -or
+    $remoteCanonicalizationPosition -ge $credentialEncodingPosition) {
+    throw 'Signing remote endpoint must be canonicalized before the write credential is materialized.'
+}
+Write-Host '[PASS] signing endpoint is bound before write credential materialization'
 
 Assert-Contains -Text $workflow -Needle 'Enforce capability ceiling and runtime readiness' -Name 'capability policy is enforced before AGY'
 Assert-Contains -Text $workflow -Needle 'default: false' -Name 'sensitive capability deployment ceilings default to denied'

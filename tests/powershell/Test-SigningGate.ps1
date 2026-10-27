@@ -115,8 +115,42 @@ try {
         TrustedPublicKey = "$signingKey.pub"
         SigningKey = $signingKey
         ExpectedRemoteHead = $originalHead
+        ExpectedRemoteUrl = $remoteRepo
         Push = $true
     }
+
+    $unexpectedRemote = Join-Path $tempRoot 'unexpected.git'
+    Invoke-Checked -FilePath 'git' -Arguments @('init', '--bare', '--quiet', $unexpectedRemote)
+
+    Invoke-Checked -FilePath 'git' -Arguments @('config', '--local', 'remote.origin.pushurl', $unexpectedRemote) -WorkingDirectory $workRepo
+    $wrongPushRejected = $false
+    try {
+        & $gateScript @gateArguments | Out-Null
+    }
+    catch {
+        $wrongPushRejected = $true
+    }
+
+    if (-not $wrongPushRejected) {
+        throw 'Expected mismatched effective push URL to be rejected before signing.'
+    }
+
+    Invoke-Checked -FilePath 'git' -Arguments @('config', '--unset-all', 'remote.origin.pushurl') -WorkingDirectory $workRepo
+
+    Invoke-Checked -FilePath 'git' -Arguments @('remote', 'set-url', '--add', 'origin', $unexpectedRemote) -WorkingDirectory $workRepo
+    $multipleFetchRejected = $false
+    try {
+        & $gateScript @gateArguments | Out-Null
+    }
+    catch {
+        $multipleFetchRejected = $true
+    }
+
+    if (-not $multipleFetchRejected) {
+        throw 'Expected multiple fetch URLs to be rejected before signing.'
+    }
+
+    Invoke-Checked -FilePath 'git' -Arguments @('remote', 'set-url', '--delete', 'origin', ([regex]::Escape($unexpectedRemote))) -WorkingDirectory $workRepo
 
     $result = & $gateScript @gateArguments
 
@@ -263,6 +297,7 @@ try {
         TrustedPublicKey = "$signingKey.pub"
         SigningKey = $signingKey
         ExpectedRemoteHead = $staleCandidate
+        ExpectedRemoteUrl = $remoteRepo
         Push = $true
     }
 
@@ -446,6 +481,7 @@ try {
     Write-Host '[PASS] preserve mode keeps commit count and commit subjects'
     Write-Host '[PASS] final tree is unchanged'
     Write-Host '[PASS] every rewritten commit verifies with the trusted SSH key'
+    Write-Host '[PASS] signing gate rejects mismatched or ambiguous remote endpoints before signing'
     Write-Host '[PASS] real remote-head race is rejected before lease-protected update'
     Write-Host '[PASS] unsupported commit headers are rejected instead of being lost during rewrite'
     Write-Host '[PASS] duplicate required commit headers are rejected instead of being collapsed during rewrite'
