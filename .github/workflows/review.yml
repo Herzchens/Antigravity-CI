@@ -37,6 +37,10 @@ on:
         required: false
         default: agy
         type: string
+      agy_sha256:
+        description: Expected SHA-256 of the exact Antigravity CLI executable allowed on the review runner.
+        required: true
+        type: string
       print_timeout_seconds:
         description: Antigravity headless timeout before the wrapper hard timeout.
         required: false
@@ -411,6 +415,7 @@ jobs:
         env:
           INFRA_PATH: ${{ github.workspace }}\infrastructure
           AGY_EXECUTABLE: ${{ inputs.agy_executable }}
+          AGY_SHA256: ${{ inputs.agy_sha256 }}
           REVIEW_TRUSTED_PUBLIC_KEY_PATH: ${{ inputs.review_trusted_public_key_path }}
           SIGNING_RUNNER_IDENTITY: ${{ needs.sign.outputs.signing_runner_identity }}
           SIGNING_KEY_FINGERPRINT: ${{ needs.sign.outputs.signing_key_fingerprint }}
@@ -421,6 +426,7 @@ jobs:
             -ForbiddenIdentity $env:SIGNING_RUNNER_IDENTITY `
             -ExpectedTrustedKeyFingerprint $env:SIGNING_KEY_FINGERPRINT `
             -AgyExecutable $env:AGY_EXECUTABLE `
+            -ExpectedAgySha256 $env:AGY_SHA256 `
             -RequireGitIsolation
 
           Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "runner_identity=$($security.Identity)" -Encoding utf8
@@ -514,6 +520,7 @@ jobs:
           INFRA_PATH: ${{ github.workspace }}\infrastructure
           REVIEW_RUN_ID: ${{ github.run_id }}.${{ github.run_attempt }}
           AGY_EXECUTABLE: ${{ inputs.agy_executable }}
+          AGY_SHA256: ${{ inputs.agy_sha256 }}
           AGY_PRINT_TIMEOUT: ${{ inputs.print_timeout_seconds }}
         run: |
           $stateRoot = Join-Path $env:RUNNER_TEMP ('antigravity-ci\' + $env:GITHUB_RUN_ID + '-' + $env:GITHUB_RUN_ATTEMPT)
@@ -529,6 +536,7 @@ jobs:
             -ExpectedHeadSha $env:TARGET_HEAD `
             -ExpectedRunId $env:REVIEW_RUN_ID `
             -AgyExecutable $env:AGY_EXECUTABLE `
+            -ExpectedAgySha256 $env:AGY_SHA256 `
             -PrintTimeoutSeconds ([int] $env:AGY_PRINT_TIMEOUT) | Out-Null
 
 

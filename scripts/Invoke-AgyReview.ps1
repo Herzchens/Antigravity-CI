@@ -34,6 +34,9 @@ param(
 
     [string] $AgyExecutable = 'agy',
 
+    [ValidatePattern('^[0-9a-fA-F]{64}$')]
+    [string] $ExpectedAgySha256,
+
     [string] $HomeDirectory = $HOME,
 
     [ValidateRange(30, 3600)]
@@ -340,6 +343,19 @@ $agyPath = [System.IO.Path]::GetFullPath($agyCommand.Source)
 $null = Assert-OutsideRepository -Path $agyPath -Name 'AgyExecutable'
 $null = Assert-NoReparsePointInExistingPath -Path $agyPath -Name 'AgyExecutable'
 
+if ([string]::IsNullOrWhiteSpace($ExpectedAgySha256)) {
+    throw 'ExpectedAgySha256 is required before Antigravity execution.'
+}
+
+$expectedAgyHash = $ExpectedAgySha256.ToLowerInvariant()
+$initialAgyHash = (
+    Get-FileHash -LiteralPath $agyPath -Algorithm SHA256 -ErrorAction Stop
+).Hash.ToLowerInvariant()
+
+if ($initialAgyHash -cne $expectedAgyHash) {
+    throw "Antigravity CLI SHA-256 '$initialAgyHash' does not match the expected pinned hash."
+}
+
 $reportResolver = Join-Path $PSScriptRoot 'Resolve-AgyReport.ps1'
 $processJobHelper = Join-Path $PSScriptRoot 'WindowsProcessJob.ps1'
 $hostPolicy = Join-Path $PSScriptRoot 'Assert-AgyHostPolicy.ps1'
@@ -441,6 +457,7 @@ try {
         $startInfo.Environment['GIT_OPTIONAL_LOCKS'] = '0'
         $startInfo.Environment['GCM_INTERACTIVE'] = 'Never'
         $startInfo.Environment['GH_PROMPT_DISABLED'] = '1'
+        $startInfo.Environment['AGY_CLI_DISABLE_AUTO_UPDATE'] = 'true'
         $startInfo.Environment['GIT_CONFIG_COUNT'] = '3'
         $startInfo.Environment['GIT_CONFIG_KEY_0'] = 'credential.helper'
         $startInfo.Environment['GIT_CONFIG_VALUE_0'] = ''
@@ -617,6 +634,14 @@ try {
         throw 'Antigravity review-account settings changed during the review run.'
     }
 
+    $finalAgyHash = (
+        Get-FileHash -LiteralPath $agyPath -Algorithm SHA256 -ErrorAction Stop
+    ).Hash.ToLowerInvariant()
+
+    if ($finalAgyHash -cne $expectedAgyHash) {
+        throw 'Antigravity CLI changed during the review run.'
+    }
+
     if ($null -ne $runFailure) {
         throw $runFailure
     }
@@ -656,6 +681,7 @@ try {
         ReportPath = $outputFullPath
         EnvelopePath = $envelopeFullPath
         AgyExitCode = $exitCode
+        AgySha256 = $finalAgyHash
         GeneratedPathCount = $generatedPaths.Count
         GeneratedPaths = $generatedPaths
     }

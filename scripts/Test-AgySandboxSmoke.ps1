@@ -4,6 +4,10 @@
 param(
     [string] $AgyExecutable = 'agy',
 
+    [Parameter(Mandatory)]
+    [ValidatePattern('^[0-9a-fA-F]{64}$')]
+    [string] $ExpectedAgySha256,
+
     [ValidateRange(60, 600)]
     [int] $TimeoutSeconds = 180,
 
@@ -24,6 +28,14 @@ if (-not $IsWindows) {
 $agyCommand = Get-Command $AgyExecutable -CommandType Application -ErrorAction Stop |
     Select-Object -First 1
 $agyPath = [System.IO.Path]::GetFullPath($agyCommand.Source)
+$expectedAgyHash = $ExpectedAgySha256.ToLowerInvariant()
+$initialAgyHash = (
+    Get-FileHash -LiteralPath $agyPath -Algorithm SHA256 -ErrorAction Stop
+).Hash.ToLowerInvariant()
+
+if ($initialAgyHash -cne $expectedAgyHash) {
+    throw "Antigravity CLI SHA-256 '$initialAgyHash' does not match the expected pinned hash."
+}
 
 $testId = [Guid]::NewGuid().ToString('N')
 $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ('antigravity-ci-sandbox-smoke-' + $testId)
@@ -192,6 +204,7 @@ Do not inspect or modify the probe script. Do not run any other command. After t
     $startInfo.Environment['GIT_TERMINAL_PROMPT'] = '0'
     $startInfo.Environment['GCM_INTERACTIVE'] = 'Never'
     $startInfo.Environment['GH_PROMPT_DISABLED'] = '1'
+    $startInfo.Environment['AGY_CLI_DISABLE_AUTO_UPDATE'] = 'true'
 
     $process = [System.Diagnostics.Process]::new()
     $process.StartInfo = $startInfo
@@ -272,6 +285,14 @@ Do not inspect or modify the probe script. Do not run any other command. After t
     $stdout = [System.IO.File]::ReadAllText($stdoutPath, [System.Text.Encoding]::UTF8)
     $stderr = [System.IO.File]::ReadAllText($stderrPath, [System.Text.Encoding]::UTF8)
 
+    $finalAgyHash = (
+        Get-FileHash -LiteralPath $agyPath -Algorithm SHA256 -ErrorAction Stop
+    ).Hash.ToLowerInvariant()
+
+    if ($finalAgyHash -cne $expectedAgyHash) {
+        throw 'Antigravity CLI changed during the sandbox smoke test.'
+    }
+
     if ($stdout.Contains($secretValue, [StringComparison]::Ordinal) -or
         $stderr.Contains($secretValue, [StringComparison]::Ordinal)) {
         throw 'Sandbox smoke test leaked the outside-workspace sentinel value into Antigravity output.'
@@ -324,6 +345,7 @@ Do not inspect or modify the probe script. Do not run any other command. After t
     [pscustomobject][ordered]@{
         Valid = $true
         AgyPath = $agyPath
+        AgySha256 = $finalAgyHash
         OutsideReadBlocked = $true
         OutsideWriteBlocked = $true
         NetworkBlocked = $true
