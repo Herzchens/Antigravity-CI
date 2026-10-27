@@ -52,7 +52,7 @@ The privileged caller uses `pull_request_target` deliberately so GitHub loads th
 
 Use an exact 40-character Antigravity-CI commit SHA in every caller workflow. Do not call a branch or moving tag. The project configuration in `.agy/project.toml` is a privileged policy input; review preparation reads it from the trusted base commit, never from the pull-request head.
 
-Generate an initial caller with `scripts/New-AntigravityCaller.ps1` and provide the pinned `-AgySha256` value from the installed review-runner binary. Generate the initial project config with `scripts/New-ProjectConfig.ps1`. Review the generated files before committing them to a target repository.
+Generate an initial caller with `scripts/New-AntigravityCaller.ps1` and provide the pinned `-AgySha256` value from the installed review-runner binary. The generator requires the caller to live under `.github/workflows/`, requires three distinct runner labels, and validates the expected reporter login before rendering secrets or runner inputs. Generate the initial project config with `scripts/New-ProjectConfig.ps1`; it writes only the canonical `.agy/project.toml` policy location. Review the generated files before committing them to a target repository.
 
 The real sandbox acceptance probe is intentionally setup-time/manual. Run `scripts/Test-AgySandboxSmoke.ps1 -ExpectedAgySha256 <pinned-hash>` under the dedicated review account after installing or upgrading AGY and after materially changing Windows sandbox policy.
 

@@ -35,6 +35,7 @@ param(
 
     [Parameter(Mandatory)]
     [ValidateLength(1, 128)]
+    [ValidatePattern('^[A-Za-z0-9-]+(?:\[bot\])?$')]
     [string] $ExpectedReporterLogin,
 
     [Parameter(Mandatory)]
@@ -88,6 +89,20 @@ function Replace-TemplateToken {
     $Text.Replace($Token, $Value)
 }
 
+$runnerLabels = @(
+    $SigningRunnerLabel,
+    $ReviewRunnerLabel,
+    $PublisherRunnerLabel
+)
+$distinctRunnerLabels = [System.Collections.Generic.HashSet[string]]::new(
+    [System.StringComparer]::OrdinalIgnoreCase
+)
+foreach ($label in $runnerLabels) {
+    if (-not $distinctRunnerLabels.Add($label)) {
+        throw 'Signing, review, and publisher runner labels must be distinct.'
+    }
+}
+
 $templatePath = Join-Path $PSScriptRoot '..\templates\caller-workflow.yml'
 $templatePath = (Resolve-Path -LiteralPath $templatePath -ErrorAction Stop).Path
 $template = Get-Content -LiteralPath $templatePath -Raw -Encoding utf8
@@ -124,13 +139,20 @@ if ($extension -notin @('.yml', '.yaml')) {
     throw 'Caller workflow output must use a .yml or .yaml extension.'
 }
 
-if ((Test-Path -LiteralPath $fullOutputPath) -and -not $Force) {
-    throw "Caller workflow already exists: $fullOutputPath"
-}
-
 $parent = Split-Path -Parent $fullOutputPath
 if ([string]::IsNullOrWhiteSpace($parent)) {
     throw 'Caller workflow output must have a parent directory.'
+}
+
+$grandParent = Split-Path -Parent $parent
+if ((Split-Path -Leaf $parent) -cne 'workflows' -or
+    [string]::IsNullOrWhiteSpace($grandParent) -or
+    (Split-Path -Leaf $grandParent) -cne '.github') {
+    throw 'Caller workflow output must be under .github/workflows/.'
+}
+
+if ((Test-Path -LiteralPath $fullOutputPath) -and -not $Force) {
+    throw "Caller workflow already exists: $fullOutputPath"
 }
 
 New-Item -ItemType Directory -Path $parent -Force -ErrorAction Stop | Out-Null
