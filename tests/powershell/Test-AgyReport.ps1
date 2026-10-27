@@ -188,7 +188,35 @@ try {
         throw 'Advisory findings should remain reportable without an invented severity-to-result policy.'
     }
 
+    $toolFailurePath = Join-Path $tempRoot 'tool-failure-passed.json'
+    $toolFailure = Get-Content -LiteralPath $validFixture -Raw -Encoding utf8 |
+        ConvertFrom-Json -Depth 32
+    $toolFailure.result = 'passed'
+    foreach ($case in @($toolFailure.tests)) {
+        $case.status = 'passed'
+        if ($null -ne $case.PSObject.Properties['evidence']) {
+            $case.PSObject.Properties.Remove('evidence')
+        }
+    }
+    $toolFailure.tool_failures = @(
+        [pscustomobject][ordered]@{
+            tool = 'run_command'
+            error = 'permission denied'
+        }
+    )
+    $toolFailure |
+        ConvertTo-Json -Depth 32 |
+        Set-Content -LiteralPath $toolFailurePath -Encoding utf8NoBOM
+
+    $toolFailureParameters = $expected.Clone()
+    $toolFailureParameters.ReportPath = $toolFailurePath
+
+    Assert-Throws -Name 'passed report containing a tool failure is rejected' -Action {
+        & $resolver @toolFailureParameters
+    }
+
     Write-Host '[PASS] report result cannot contradict failed test evidence'
+    Write-Host '[PASS] report result cannot hide tool execution failures'
     Write-Host '[PASS] finding severity remains advisory rather than an automatic result override'
 
     $symlinkPath = Join-Path $tempRoot 'report-link.json'
