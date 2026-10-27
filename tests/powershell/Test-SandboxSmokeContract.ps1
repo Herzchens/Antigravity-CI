@@ -50,3 +50,7 @@ Assert-Contains -Needle 'outside_write_succeeded' -Name 'outside write result is
 Assert-Contains -Needle 'network_succeeded' -Name 'network result is asserted'
 Assert-Contains -Needle "https://example.com/" -Name 'network isolation is probed with a reachable HTTPS origin'
 Assert-Contains -Needle 'SentinelLeakedToOutput = $false' -Name 'sentinel leakage is an explicit acceptance invariant'
+Assert-Contains -Needle "'AGY_ADC_AUTH'" -Name 'sandbox smoke strips Antigravity ADC auth override'
+Assert-Contains -Needle "'GEMINI_API_KEY'" -Name 'sandbox smoke strips Gemini API-key auth override'
+Assert-Contains -Needle "'GOOGLE_APPLICATION_CREDENTIALS'" -Name 'sandbox smoke strips Google credential-file override'
+Assert-Contains -Needle 'credentials?' -Name 'sandbox smoke strips plural credential-named environment values'

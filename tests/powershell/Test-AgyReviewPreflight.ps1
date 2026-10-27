@@ -192,8 +192,9 @@ $ErrorActionPreference = 'Stop'
 
 foreach ($name in @(
     'AGY_REPORTER_TOKEN', 'GITHUB_TOKEN', 'SSH_AUTH_SOCK',
-    'GOOGLE_GEMINI_BASE_URL', 'AGY_ADC_AUTH',
+    'GOOGLE_GEMINI_BASE_URL', 'GEMINI_API_KEY', 'AGY_ADC_AUTH',
     'GOOGLE_APPLICATION_CREDENTIALS', 'CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE',
+    'FIXTURE_CREDENTIALS',
     'HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'NO_PROXY'
 )) {
     if (-not [string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($name))) {
@@ -261,8 +262,9 @@ pwsh -NoProfile -File "$fakeScript"
 
         $sensitiveNames = @(
             'AGY_REPORTER_TOKEN', 'GITHUB_TOKEN', 'SSH_AUTH_SOCK',
-            'GOOGLE_GEMINI_BASE_URL', 'AGY_ADC_AUTH',
+            'GOOGLE_GEMINI_BASE_URL', 'GEMINI_API_KEY', 'AGY_ADC_AUTH',
             'GOOGLE_APPLICATION_CREDENTIALS', 'CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE',
+            'FIXTURE_CREDENTIALS',
             'HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'NO_PROXY'
         )
         $savedSensitive = @{}

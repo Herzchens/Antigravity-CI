@@ -129,7 +129,12 @@ foreach ($name in @(
     'GH_TOKEN',
     'AGY_REPORTER_TOKEN',
     'SSH_AUTH_SOCK',
-    'SSH_AGENT_PID'
+    'SSH_AGENT_PID',
+    'AGY_ADC_AUTH',
+    'GEMINI_API_KEY',
+    'GOOGLE_GEMINI_BASE_URL',
+    'GOOGLE_APPLICATION_CREDENTIALS',
+    'CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE'
 )) {
     $oldEnvironment[$name] = [Environment]::GetEnvironmentVariable($name)
 }
@@ -171,7 +176,18 @@ exit /b 0
     $env:GIT_TEMPLATE_DIR = $templatePath
     $env:ANTIGRAVITY_GIT_ISOLATION_ROOT = $gitIsolationRoot
 
-    foreach ($name in @('GITHUB_TOKEN', 'GH_TOKEN', 'AGY_REPORTER_TOKEN', 'SSH_AUTH_SOCK', 'SSH_AGENT_PID')) {
+    foreach ($name in @(
+        'GITHUB_TOKEN',
+        'GH_TOKEN',
+        'AGY_REPORTER_TOKEN',
+        'SSH_AUTH_SOCK',
+        'SSH_AGENT_PID',
+        'AGY_ADC_AUTH',
+        'GEMINI_API_KEY',
+        'GOOGLE_GEMINI_BASE_URL',
+        'GOOGLE_APPLICATION_CREDENTIALS',
+        'CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE'
+    )) {
         Remove-Item -LiteralPath "Env:$name" -ErrorAction SilentlyContinue
     }
 
@@ -220,6 +236,26 @@ exit /b 2
     }
 
     Write-Host '[PASS] isolated review account fixture passes with public key only'
+
+    $env:AGY_ADC_AUTH = 'true'
+    Assert-Throws -Name 'review role rejects ambient Antigravity ADC authentication' -Action {
+        & $preflight @reviewParameters
+    }
+    Remove-Item Env:AGY_ADC_AUTH -ErrorAction SilentlyContinue
+
+    $env:GEMINI_API_KEY = 'fixture-api-key'
+    Assert-Throws -Name 'review role rejects ambient Gemini API-key authentication' -Action {
+        & $preflight @reviewParameters
+    }
+    Remove-Item Env:GEMINI_API_KEY -ErrorAction SilentlyContinue
+
+    $env:GOOGLE_GEMINI_BASE_URL = 'https://example.invalid'
+    Assert-Throws -Name 'review role rejects custom Gemini endpoint override' -Action {
+        & $preflight @reviewParameters
+    }
+    Remove-Item Env:GOOGLE_GEMINI_BASE_URL -ErrorAction SilentlyContinue
+
+    Write-Host '[PASS] review role requires cached Antigravity account authentication'
 
     Add-Content -LiteralPath $fakeAgy -Value 'rem tampered' -Encoding ascii
     Assert-Throws -Name 'review role rejects a modified Antigravity executable' -Action {
