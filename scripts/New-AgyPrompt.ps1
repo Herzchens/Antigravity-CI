@@ -192,7 +192,7 @@ Mandatory rules:
 9. Findings must be evidence-based. Record tool failures and limitations instead of inventing a result.
 10. Return exactly one JSON object matching the schema below. Do not wrap the JSON in Markdown fences or add prose before or after it.
 11. The report repository, pr, head_sha, and run_id fields must exactly match the authoritative target above.
-12. Never set result to passed when any reported test has status failed. Finding severity remains advisory; report the evidence and choose the overall result independently rather than hiding findings.
+12. Never set result to passed when any reported test has status failed or when tool_failures is non-empty. Finding severity remains advisory; report the evidence and choose the overall result independently rather than hiding findings.
 
 Expected report schema:
 <agy_report_schema_json>

@@ -158,6 +158,10 @@ if ([string] $report.result -ceq 'passed') {
     if ($failedTests.Count -gt 0) {
         throw 'AGY report result is contradictory: a passed review cannot contain failed tests.'
     }
+
+    if (@($report.tool_failures).Count -gt 0) {
+        throw 'AGY report result is contradictory: a passed review cannot contain tool failures.'
+    }
 }
 
 $report
