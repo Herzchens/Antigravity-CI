@@ -23,6 +23,8 @@ $tests = @(
     'Test-AgySettingsPolicy.ps1',
     'Test-AgyHostPolicy.ps1',
     'Test-AgyWorkspaceTrust.ps1',
+    'Test-ReviewFilesystemBoundary.ps1',
+    'Test-ReviewFilesystemBoundaryContract.ps1',
     'Test-SandboxSmokeContract.ps1',
     'Test-WindowsProcessJob.ps1',
     'Test-AdoptionTooling.ps1',

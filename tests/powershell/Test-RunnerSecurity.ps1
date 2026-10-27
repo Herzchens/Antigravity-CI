@@ -43,6 +43,11 @@ $globalConfig = Join-Path $tempRoot 'global.gitconfig'
 $keyPath = Join-Path $tempRoot 'trusted-key'
 $fakeSshAdd = Join-Path $fakeBin 'ssh-add.cmd'
 $fakeAgy = Join-Path $fakeBin 'agy.cmd'
+$protectedDirectory = Join-Path $tempRoot 'owner-private'
+$protectedSentinel = Join-Path $protectedDirectory 'sentinel.txt'
+$policyDirectory = Join-Path $tempRoot 'review-policy'
+$probeManifest = Join-Path $policyDirectory 'protected-read-probes.json'
+$fixtureIdentity = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
 
 New-Item -ItemType Directory -Path $fakeBin -Force | Out-Null
 New-Item -ItemType Directory -Path $fakeHome -Force | Out-Null
@@ -59,6 +64,33 @@ $settingsFixture = [ordered]@{
     permissions = [ordered]@{ allow = @() }
 }
 $settingsFixture | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $settingsPath -Encoding utf8NoBOM
+
+New-Item -ItemType Directory -Path $protectedDirectory -Force | Out-Null
+New-Item -ItemType Directory -Path $policyDirectory -Force | Out-Null
+Set-Content -LiteralPath $protectedSentinel -Value 'fixture sentinel' -Encoding utf8NoBOM
+
+[ordered]@{
+    schema_version = 1
+    probes = @(
+        [ordered]@{
+            name = 'fixture-owner-private'
+            path = $protectedSentinel
+        }
+    )
+} | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $probeManifest -Encoding utf8NoBOM
+
+foreach ($aclTarget in @(
+    @{ Path = $protectedSentinel; Rights = 'R' },
+    @{ Path = $protectedDirectory; Rights = 'W' },
+    @{ Path = $probeManifest; Rights = 'W' },
+    @{ Path = $policyDirectory; Rights = 'W' }
+)) {
+    $denySpec = $fixtureIdentity + ':(' + $aclTarget.Rights + ')'
+    & icacls.exe $aclTarget.Path /deny $denySpec | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw 'Unable to create ACL-denied filesystem-boundary fixture.'
+    }
+}
 
 $oldPath = $env:PATH
 $oldGlobalConfig = $env:GIT_CONFIG_GLOBAL
@@ -115,12 +147,15 @@ exit /b 2
         TrustedPublicKey = "$keyPath.pub"
         AgyExecutable = $fakeAgy
         HomeDirectory = $fakeHome
+        ProtectedReadProbeManifest = $probeManifest
         MinimumWindowsBuild = 1
     }
 
     $review = & $preflight @reviewParameters
 
-    if (-not $review.Valid -or $review.TrustedKeyFingerprint -ne $fingerprint) {
+    if (-not $review.Valid -or
+        $review.TrustedKeyFingerprint -ne $fingerprint -or
+        $review.ProtectedReadProbeCount -ne 1) {
         throw 'Clean review fixture did not pass the runner-security preflight.'
     }
 
@@ -213,6 +248,12 @@ exit /b 0
     Write-Host '[PASS] signing role requires the trusted key in its SSH agent'
 }
 finally {
+    foreach ($aclPath in @($protectedSentinel, $protectedDirectory, $probeManifest, $policyDirectory)) {
+        if (Test-Path -LiteralPath $aclPath) {
+            & icacls.exe $aclPath /remove:d $fixtureIdentity | Out-Null
+        }
+    }
+
     $env:PATH = $oldPath
 
     if ($null -eq $oldGlobalConfig) {
