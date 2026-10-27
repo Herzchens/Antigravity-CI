@@ -35,7 +35,13 @@ if ($null -eq $tokenItem -or [string]::IsNullOrWhiteSpace([string] $tokenItem.Va
 }
 
 $token = [string] $tokenItem.Value
-$client = [System.Net.Http.HttpClient]::new()
+
+$handler = [System.Net.Http.HttpClientHandler]::new()
+$handler.AllowAutoRedirect = $false
+$handler.UseCookies = $false
+$handler.UseDefaultCredentials = $false
+
+$client = [System.Net.Http.HttpClient]::new($handler, $true)
 $client.Timeout = [TimeSpan]::FromSeconds(30)
 $client.DefaultRequestHeaders.UserAgent.ParseAdd('Antigravity-CI/1')
 $client.DefaultRequestHeaders.Accept.ParseAdd('application/vnd.github+json')
