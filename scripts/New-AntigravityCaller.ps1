@@ -14,6 +14,10 @@ param(
     [string] $InfrastructureCommit,
 
     [Parameter(Mandatory)]
+    [ValidatePattern('^(?!-)[A-Za-z0-9-]{1,128}(?<!-)(?:\[bot\])?$')]
+    [string] $AuthorizedPrLogin,
+
+    [Parameter(Mandatory)]
     [ValidatePattern('^[A-Za-z0-9._-]+$')]
     [string] $SigningRunnerLabel,
 
@@ -107,6 +111,7 @@ $templatePath = Join-Path $PSScriptRoot '..\templates\caller-workflow.yml'
 $templatePath = (Resolve-Path -LiteralPath $templatePath -ErrorAction Stop).Path
 $template = Get-Content -LiteralPath $templatePath -Raw -Encoding utf8
 
+$authorizedPrLogin = ConvertTo-YamlSingleQuotedValue -Value $AuthorizedPrLogin -Name 'AuthorizedPrLogin'
 $signingPath = ConvertTo-YamlSingleQuotedValue -Value $SigningPublicKeyPath -Name 'SigningPublicKeyPath'
 $reviewPath = ConvertTo-YamlSingleQuotedValue -Value $ReviewPublicKeyPath -Name 'ReviewPublicKeyPath'
 $reporterLogin = ConvertTo-YamlSingleQuotedValue -Value $ExpectedReporterLogin -Name 'ExpectedReporterLogin'
@@ -115,6 +120,8 @@ $agySha256 = $AgySha256.ToLowerInvariant()
 $replacements = [ordered]@{
     'REPLACE_WITH_INFRASTRUCTURE_REPOSITORY' = $InfrastructureRepository
     'REPLACE_WITH_PINNED_COMMIT_SHA' = $InfrastructureCommit
+    'REPLACE_WITH_AUTHORIZED_PR_LOGIN_CONDITION' = $authorizedPrLogin
+    'REPLACE_WITH_AUTHORIZED_PR_LOGIN_INPUT' = $authorizedPrLogin
     'REPLACE_WITH_SIGNING_RUNNER_LABEL' = $SigningRunnerLabel
     'REPLACE_WITH_REVIEW_RUNNER_LABEL' = $ReviewRunnerLabel
     'REPLACE_WITH_PUBLISHER_RUNNER_LABEL' = $PublisherRunnerLabel
@@ -166,6 +173,7 @@ New-Item -ItemType Directory -Path $parent -Force -ErrorAction Stop | Out-Null
     Path = $fullOutputPath
     InfrastructureRepository = $InfrastructureRepository
     InfrastructureCommit = $InfrastructureCommit
+    AuthorizedPrLogin = $AuthorizedPrLogin
     SigningRunnerLabel = $SigningRunnerLabel
     ReviewRunnerLabel = $ReviewRunnerLabel
     PublisherRunnerLabel = $PublisherRunnerLabel

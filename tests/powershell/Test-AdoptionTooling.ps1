@@ -43,6 +43,7 @@ try {
         OutputPath = $callerPath
         InfrastructureRepository = 'Herzchens/Antigravity-CI'
         InfrastructureCommit = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+        AuthorizedPrLogin = 'Herzchens'
         SigningRunnerLabel = 'agy-signing'
         ReviewRunnerLabel = 'agy-review'
         PublisherRunnerLabel = 'agy-publisher'
@@ -83,6 +84,11 @@ try {
         throw 'Generated caller workflow does not grant pull-request read permission required by the reusable workflow.'
     }
 
+    if ($callerText -notmatch "github.event.pull_request.user.login == 'Herzchens'" -or
+        $callerText -notmatch "authorized_pr_login: 'Herzchens'") {
+        throw 'Generated caller workflow does not bind automatic signing to the authorized PR login.'
+    }
+
     if ($callerText -notmatch "agy_sha256: 'b{64}'") {
         throw 'Generated caller workflow does not pin the expected AGY executable SHA-256.'
     }
@@ -91,6 +97,7 @@ try {
     Write-Host '[PASS] caller generator safely quotes Windows key paths'
     Write-Host '[PASS] caller generator uses the trusted default-branch PR event'
     Write-Host '[PASS] caller generator pins the AGY executable SHA-256'
+    Write-Host '[PASS] caller generator binds automatic signing to one authorized PR login'
 
     Assert-Throws -Name 'caller generator refuses overwrite without Force' -Action {
         & $callerGenerator @callerParameters
@@ -104,6 +111,12 @@ try {
     $duplicateLabelParameters.ReviewRunnerLabel = 'AGY-SIGNING'
     Assert-Throws -Name 'caller generator rejects duplicate runner trust-domain labels' -Action {
         & $callerGenerator @duplicateLabelParameters
+    }
+
+    $badAuthorParameters = $callerParameters.Clone()
+    $badAuthorParameters.AuthorizedPrLogin = 'bad author'
+    Assert-Throws -Name 'caller generator rejects malformed authorized PR login' -Action {
+        & $callerGenerator @badAuthorParameters
     }
 
     $badReporterParameters = $callerParameters.Clone()

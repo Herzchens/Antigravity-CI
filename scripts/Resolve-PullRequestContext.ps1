@@ -17,6 +17,10 @@ param(
     [ValidatePattern('^[A-Za-z0-9._/-]+$')]
     [string] $ExpectedBaseRef,
 
+    [Parameter(Mandatory)]
+    [ValidatePattern('^(?!-)[A-Za-z0-9-]{1,128}(?<!-)(?:\[bot\])?$')]
+    [string] $ExpectedAuthorLogin,
+
     [ValidateSet('opened', 'reopened', 'synchronize', 'ready_for_review')]
     [string[]] $AllowedActions = @(
         'opened',
@@ -167,6 +171,11 @@ if ($baseRepositoryId -ne $headRepositoryId) {
     throw 'Head and base repository IDs differ; privileged review requires a same-repository pull request.'
 }
 
+$authorLogin = Assert-RequiredString -Value $pullRequest.user.login -Name 'pull_request.user.login' -MaxLength 128
+if (-not $authorLogin.Equals($ExpectedAuthorLogin, [StringComparison]::OrdinalIgnoreCase)) {
+    throw "Pull request author '$authorLogin' is not authorized for automatic signing."
+}
+
 $prNumber = [int] $pullRequest.number
 if ($prNumber -le 0) {
     throw 'Pull-request number must be a positive integer.'
@@ -196,6 +205,7 @@ if ($baseSha -ceq $headSha) {
     Repository = $baseRepository
     RepositoryId = $baseRepositoryId
     PrNumber = $prNumber
+    AuthorLogin = $authorLogin
     BaseRef = $baseRef
     BaseSha = $baseSha
     HeadRef = $headRef
