@@ -1,0 +1,504 @@
+#requires -Version 7.0
+
+[CmdletBinding()]
+param(
+    [Parameter(Mandatory)]
+    [ValidatePattern('^[0-9a-fA-F]{40}$')]
+    [string] $BaseSha,
+
+    [Parameter(Mandatory)]
+    [ValidatePattern('^[0-9a-fA-F]{40}$')]
+    [string] $HeadSha,
+
+    [Parameter(Mandatory)]
+    [string] $BranchName,
+
+    [string] $RepositoryPath = '.',
+
+    [ValidatePattern('^[A-Za-z0-9._-]+$')]
+    [string] $RemoteName = 'origin',
+
+    [string] $TrustedPublicKey,
+
+    [ValidatePattern('^[A-Za-z0-9@._+-]+$')]
+    [string] $Principal = 'antigravity-ci',
+
+    [switch] $Push,
+
+    [ValidatePattern('^[0-9a-fA-F]{40}$')]
+    [string] $ExpectedRemoteHead
+)
+
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
+
+function Invoke-Git {
+    param(
+        [Parameter(Mandatory)]
+        [string[]] $Arguments,
+
+        [switch] $AllowFailure
+    )
+
+    $output = @(& git -C $script:RepositoryRoot @Arguments 2>&1)
+    $exitCode = $LASTEXITCODE
+
+    if ($exitCode -ne 0 -and -not $AllowFailure) {
+        throw "git command failed with exit code $exitCode."
+    }
+
+    [pscustomobject]@{
+        ExitCode = $exitCode
+        Output = $output
+    }
+}
+
+function Resolve-Commit {
+    param(
+        [Parameter(Mandatory)]
+        [string] $Sha
+    )
+
+    $resolved = (Invoke-Git -Arguments @(
+        'rev-parse',
+        '--verify',
+        "$Sha^{commit}"
+    )).Output | Select-Object -First 1
+
+    if ([string]::IsNullOrWhiteSpace($resolved)) {
+        throw "Unable to resolve commit $Sha."
+    }
+
+    $resolved.Trim().ToLowerInvariant()
+}
+
+function Get-CommitField {
+    param(
+        [Parameter(Mandatory)]
+        [string] $Sha,
+
+        [Parameter(Mandatory)]
+        [string] $Format
+    )
+
+    $value = (Invoke-Git -Arguments @(
+        'show',
+        '--no-patch',
+        "--format=$Format",
+        $Sha
+    )).Output | Select-Object -First 1
+
+    if ($null -eq $value) {
+        return ''
+    }
+
+    [string] $value
+}
+
+function Get-CommitRecord {
+    param(
+        [Parameter(Mandatory)]
+        [string] $Sha
+    )
+
+    $tree = (Invoke-Git -Arguments @(
+        'rev-parse',
+        "$Sha^{tree}"
+    )).Output | Select-Object -First 1
+
+    $parentsLine = (Invoke-Git -Arguments @(
+        'rev-list',
+        '--parents',
+        '-n',
+        '1',
+        $Sha
+    )).Output | Select-Object -First 1
+
+    $parentParts = @($parentsLine.Trim() -split '\s+')
+    $parents = @()
+    if ($parentParts.Count -gt 1) {
+        $parents = @($parentParts[1..($parentParts.Count - 1)])
+    }
+
+    if ($parents.Count -gt 1) {
+        throw "Merge commit $Sha is not supported by preserve-commit signing mode."
+    }
+
+    [pscustomobject]@{
+        Sha = $Sha
+        Tree = $tree.Trim()
+        Parents = $parents
+        AuthorName = Get-CommitField -Sha $Sha -Format '%an'
+        AuthorEmail = Get-CommitField -Sha $Sha -Format '%ae'
+        AuthorDate = Get-CommitField -Sha $Sha -Format '%aI'
+        CommitterName = Get-CommitField -Sha $Sha -Format '%cn'
+        CommitterEmail = Get-CommitField -Sha $Sha -Format '%ce'
+        CommitterDate = Get-CommitField -Sha $Sha -Format '%cI'
+    }
+}
+
+function Test-TrustedSignature {
+    param(
+        [Parameter(Mandatory)]
+        [string] $Sha,
+
+        [switch] $ThrowOnFailure
+    )
+
+    $verifyParameters = @{
+        RepositoryPath = $script:RepositoryRoot
+        CommitSha = $Sha
+        Principal = $Principal
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($TrustedPublicKey)) {
+        $verifyParameters.SigningKey = $TrustedPublicKey
+    }
+
+    try {
+        & $script:VerificationScript @verifyParameters | Out-Null
+        return $true
+    }
+    catch {
+        if ($ThrowOnFailure) {
+            throw
+        }
+
+        return $false
+    }
+}
+
+function Get-CommitMessageBytes {
+    param(
+        [Parameter(Mandatory)]
+        [string] $Sha
+    )
+
+    $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
+    $startInfo.FileName = 'git'
+    $startInfo.UseShellExecute = $false
+    $startInfo.RedirectStandardOutput = $true
+    $startInfo.RedirectStandardError = $true
+    $startInfo.ArgumentList.Add('-C')
+    $startInfo.ArgumentList.Add($script:RepositoryRoot)
+    $startInfo.ArgumentList.Add('cat-file')
+    $startInfo.ArgumentList.Add('commit')
+    $startInfo.ArgumentList.Add($Sha)
+
+    $process = [System.Diagnostics.Process]::new()
+    $process.StartInfo = $startInfo
+
+    if (-not $process.Start()) {
+        throw "Unable to read commit object $Sha."
+    }
+
+    $memory = [System.IO.MemoryStream]::new()
+    try {
+        $process.StandardOutput.BaseStream.CopyTo($memory)
+        $stderr = $process.StandardError.ReadToEnd()
+        $process.WaitForExit()
+
+        if ($process.ExitCode -ne 0) {
+            throw "git cat-file failed for commit $Sha."
+        }
+
+        $bytes = $memory.ToArray()
+    }
+    finally {
+        $memory.Dispose()
+        $process.Dispose()
+    }
+
+    for ($index = 0; $index -lt ($bytes.Length - 1); $index++) {
+        if ($bytes[$index] -eq 10 -and $bytes[$index + 1] -eq 10) {
+            $messageStart = $index + 2
+            $messageLength = $bytes.Length - $messageStart
+            $message = [byte[]]::new($messageLength)
+            [System.Array]::Copy($bytes, $messageStart, $message, 0, $messageLength)
+            return $message
+        }
+    }
+
+    throw "Commit $Sha does not contain a valid header/message separator."
+}
+
+function New-SignedCommit {
+    param(
+        [Parameter(Mandatory)]
+        [pscustomobject] $Record,
+
+        [Parameter(Mandatory)]
+        [string] $ParentSha
+    )
+
+    $messagePath = Join-Path $script:TempDirectory ($Record.Sha + '.message')
+    $messageBytes = Get-CommitMessageBytes -Sha $Record.Sha
+    [System.IO.File]::WriteAllBytes($messagePath, $messageBytes)
+
+    $savedEnvironment = @{
+        GIT_AUTHOR_NAME = $env:GIT_AUTHOR_NAME
+        GIT_AUTHOR_EMAIL = $env:GIT_AUTHOR_EMAIL
+        GIT_AUTHOR_DATE = $env:GIT_AUTHOR_DATE
+        GIT_COMMITTER_NAME = $env:GIT_COMMITTER_NAME
+        GIT_COMMITTER_EMAIL = $env:GIT_COMMITTER_EMAIL
+        GIT_COMMITTER_DATE = $env:GIT_COMMITTER_DATE
+    }
+
+    try {
+        $env:GIT_AUTHOR_NAME = $Record.AuthorName
+        $env:GIT_AUTHOR_EMAIL = $Record.AuthorEmail
+        $env:GIT_AUTHOR_DATE = $Record.AuthorDate
+        $env:GIT_COMMITTER_NAME = $Record.CommitterName
+        $env:GIT_COMMITTER_EMAIL = $Record.CommitterEmail
+        $env:GIT_COMMITTER_DATE = $Record.CommitterDate
+
+        $result = Invoke-Git -Arguments @(
+            '-c',
+            'gpg.format=ssh',
+            '-c',
+            "gpg.ssh.program=$script:SshKeygenProgram",
+            'commit-tree',
+            $Record.Tree,
+            '-p',
+            $ParentSha,
+            '-S',
+            '-F',
+            $messagePath
+        )
+
+        $newSha = ($result.Output | Select-Object -First 1).Trim().ToLowerInvariant()
+        if ($newSha -notmatch '^[0-9a-f]{40}$') {
+            throw "Signing commit $($Record.Sha) did not return a valid commit SHA."
+        }
+
+        $newTree = (Invoke-Git -Arguments @(
+            'rev-parse',
+            "$newSha^{tree}"
+        )).Output | Select-Object -First 1
+
+        if ($newTree.Trim() -ne $Record.Tree) {
+            throw "Tree changed while signing commit $($Record.Sha)."
+        }
+
+        $null = Test-TrustedSignature -Sha $newSha -ThrowOnFailure
+
+        $newSha
+    }
+    finally {
+        foreach ($entry in $savedEnvironment.GetEnumerator()) {
+            if ($null -eq $entry.Value) {
+                Remove-Item -Path "Env:$($entry.Key)" -ErrorAction SilentlyContinue
+            }
+            else {
+                Set-Item -Path "Env:$($entry.Key)" -Value $entry.Value
+            }
+        }
+    }
+}
+
+$null = Get-Command git -ErrorAction Stop
+$sshKeygenCommand = Get-Command ssh-keygen -ErrorAction Stop
+
+$RepositoryRoot = (Resolve-Path -LiteralPath $RepositoryPath -ErrorAction Stop).Path
+$script:RepositoryRoot = $RepositoryRoot
+$script:VerificationScript = Join-Path $PSScriptRoot 'Test-CommitSignature.ps1'
+
+$configuredSshProgram = (Invoke-Git -Arguments @(
+    'config',
+    '--get',
+    'gpg.ssh.program'
+) -AllowFailure).Output | Select-Object -First 1
+
+$script:SshKeygenProgram = if ([string]::IsNullOrWhiteSpace($configuredSshProgram)) {
+    $sshKeygenCommand.Source
+}
+else {
+    $configuredSshProgram.Trim()
+}
+
+if (-not (Test-Path -LiteralPath $script:VerificationScript -PathType Leaf)) {
+    throw 'Test-CommitSignature.ps1 is required next to the signing gate.'
+}
+
+$branchCheck = Invoke-Git -Arguments @(
+    'check-ref-format',
+    '--branch',
+    $BranchName
+) -AllowFailure
+
+if ($branchCheck.ExitCode -ne 0) {
+    throw 'Branch name is not a valid Git branch name.'
+}
+
+$base = Resolve-Commit -Sha $BaseSha
+$head = Resolve-Commit -Sha $HeadSha
+
+$ancestorCheck = Invoke-Git -Arguments @(
+    'merge-base',
+    '--is-ancestor',
+    $base,
+    $head
+) -AllowFailure
+
+if ($ancestorCheck.ExitCode -ne 0) {
+    throw 'BaseSha must be an ancestor of HeadSha.'
+}
+
+$originalHeadTree = (Invoke-Git -Arguments @(
+    'rev-parse',
+    "$head^{tree}"
+)).Output | Select-Object -First 1
+$originalHeadTree = $originalHeadTree.Trim()
+
+$commitLines = (Invoke-Git -Arguments @(
+    'rev-list',
+    '--reverse',
+    "$base..$head"
+)).Output
+
+$commits = @($commitLines | Where-Object {
+    -not [string]::IsNullOrWhiteSpace($_)
+} | ForEach-Object {
+    $_.Trim().ToLowerInvariant()
+})
+
+if ($commits.Count -eq 0) {
+    [pscustomobject]@{
+        BaseSha = $base
+        OriginalHeadSha = $head
+        SignedHeadSha = $head
+        CommitCount = 0
+        RewritePerformed = $false
+        Pushed = $false
+        HeadTree = $originalHeadTree
+    }
+    return
+}
+
+$tempDirectory = Join-Path ([System.IO.Path]::GetTempPath()) (
+    'antigravity-ci-signing-gate-' + [Guid]::NewGuid().ToString('N')
+)
+$script:TempDirectory = $tempDirectory
+New-Item -ItemType Directory -Path $tempDirectory -ErrorAction Stop | Out-Null
+
+try {
+    $currentParent = $base
+    $previousOldCommit = $null
+    $rewritePerformed = $false
+
+    foreach ($oldCommit in $commits) {
+        $record = Get-CommitRecord -Sha $oldCommit
+
+        if ($record.Parents.Count -ne 1) {
+            throw "Commit $oldCommit must have exactly one parent."
+        }
+
+        $expectedOldParent = if ($null -eq $previousOldCommit) {
+            $base
+        }
+        else {
+            $previousOldCommit
+        }
+
+        if ($record.Parents[0].ToLowerInvariant() -ne $expectedOldParent) {
+            throw "PR history is not linear at commit $oldCommit."
+        }
+
+        $signatureTrusted = Test-TrustedSignature -Sha $oldCommit
+        $parentUnchanged = $record.Parents[0].ToLowerInvariant() -eq $currentParent
+
+        if ($signatureTrusted -and $parentUnchanged) {
+            $newCommit = $oldCommit
+        }
+        else {
+            $newCommit = New-SignedCommit -Record $record -ParentSha $currentParent
+            $rewritePerformed = $true
+        }
+
+        $currentParent = $newCommit
+        $previousOldCommit = $oldCommit
+    }
+
+    $signedHead = $currentParent
+    $signedHeadTree = (Invoke-Git -Arguments @(
+        'rev-parse',
+        "$signedHead^{tree}"
+    )).Output | Select-Object -First 1
+    $signedHeadTree = $signedHeadTree.Trim()
+
+    if ($signedHeadTree -ne $originalHeadTree) {
+        throw 'Final tree does not match the original PR head tree.'
+    }
+
+    $signedCommitLines = (Invoke-Git -Arguments @(
+        'rev-list',
+        '--reverse',
+        "$base..$signedHead"
+    )).Output
+
+    foreach ($signedCommit in @($signedCommitLines)) {
+        if ([string]::IsNullOrWhiteSpace($signedCommit)) {
+            continue
+        }
+
+        if (-not (Test-TrustedSignature -Sha $signedCommit.Trim())) {
+            throw "Final history contains an untrusted commit: $($signedCommit.Trim())."
+        }
+    }
+
+    $pushed = $false
+
+    if ($Push -and $rewritePerformed) {
+        if ([string]::IsNullOrWhiteSpace($ExpectedRemoteHead)) {
+            throw 'ExpectedRemoteHead is required when -Push is used.'
+        }
+
+        $expectedHead = $ExpectedRemoteHead.ToLowerInvariant()
+        if ($expectedHead -ne $head) {
+            throw 'ExpectedRemoteHead must equal the input HeadSha.'
+        }
+
+        $remoteLine = (Invoke-Git -Arguments @(
+            'ls-remote',
+            '--heads',
+            $RemoteName,
+            "refs/heads/$BranchName"
+        )).Output | Select-Object -First 1
+
+        if ([string]::IsNullOrWhiteSpace($remoteLine)) {
+            throw 'Remote branch does not exist.'
+        }
+
+        $remoteHead = ($remoteLine.Trim() -split '\s+')[0].ToLowerInvariant()
+        if ($remoteHead -ne $expectedHead) {
+            throw "Remote branch moved from expected head $expectedHead to $remoteHead."
+        }
+
+        $leaseArgument = '--force-with-lease=refs/heads/' + $BranchName + ':' + $expectedHead
+        $refSpec = $signedHead + ':refs/heads/' + $BranchName
+
+        Invoke-Git -Arguments @(
+            'push',
+            $leaseArgument,
+            $RemoteName,
+            $refSpec
+        ) | Out-Null
+
+        $pushed = $true
+    }
+
+    [pscustomobject]@{
+        BaseSha = $base
+        OriginalHeadSha = $head
+        SignedHeadSha = $signedHead
+        CommitCount = $commits.Count
+        RewritePerformed = $rewritePerformed
+        Pushed = $pushed
+        HeadTree = $signedHeadTree
+    }
+}
+finally {
+    if (Test-Path -LiteralPath $tempDirectory) {
+        Remove-Item -LiteralPath $tempDirectory -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
