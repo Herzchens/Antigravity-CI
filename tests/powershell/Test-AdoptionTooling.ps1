@@ -62,6 +62,19 @@ try {
         throw 'Generated caller workflow is not pinned to the requested infrastructure commit.'
     }
 
+    if (-not $callerText.Contains('  pull_request_target:', [StringComparison]::Ordinal)) {
+        throw 'Generated caller workflow must use trusted-base pull_request_target.'
+    }
+
+    if ($callerText.Contains(([string][char]10 + '  pull_request:' + [string][char]10), [StringComparison]::Ordinal)) {
+        throw 'Generated caller workflow must not execute PR-controlled pull_request workflow code.'
+    }
+
+    if (-not $callerText.Contains('github.event.pull_request.base.ref == github.event.repository.default_branch', [StringComparison]::Ordinal) -or
+        -not $callerText.Contains('github.event.pull_request.head.repo.id == github.event.pull_request.base.repo.id', [StringComparison]::Ordinal)) {
+        throw 'Generated caller workflow is missing pre-allocation trusted PR guards.'
+    }
+
     if ($callerText -notmatch "Owner''s Key") {
         throw 'Single quote in YAML path was not escaped safely.'
     }
@@ -71,6 +84,7 @@ try {
     }
 
     Write-Host '[PASS] caller generator renders an exact-SHA reusable workflow reference'
+    Write-Host '[PASS] caller generator uses trusted-base trigger and pre-allocation guards'
     Write-Host '[PASS] caller generator safely quotes Windows key paths'
 
     Assert-Throws -Name 'caller generator refuses overwrite without Force' -Action {

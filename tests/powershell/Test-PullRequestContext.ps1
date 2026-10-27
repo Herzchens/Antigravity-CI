@@ -90,7 +90,7 @@ $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) (
 New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
 
 $common = @{
-    EventName = 'pull_request'
+    EventName = 'pull_request_target'
     ExpectedRepository = 'Herzchens/Antigravity-CI'
     ExpectedBaseRef = 'main'
 }

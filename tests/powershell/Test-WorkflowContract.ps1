@@ -45,7 +45,7 @@ function Assert-NotContains {
 }
 
 Assert-Contains -Text $workflow -Needle '  workflow_call:' -Name 'reusable workflow is workflow_call-only'
-Assert-NotContains -Text $workflow -Needle 'pull_request_target' -Name 'pull_request_target is forbidden'
+Assert-NotContains -Text $workflow -Needle ([string][char]10 + '  pull_request_target:' + [string][char]10) -Name 'reusable workflow has no direct privileged trigger'
 Assert-NotContains -Text $workflow -Needle 'secrets: inherit' -Name 'blanket secret inheritance is forbidden'
 Assert-NotContains -Text $workflow -Needle 'write-all' -Name 'write-all permission is forbidden'
 Assert-NotContains -Text $workflow -Needle '--dangerously-skip-permissions' -Name 'unsafe AGY permission bypass is forbidden'
@@ -83,7 +83,11 @@ Assert-Contains -Text $publisherJobText -Needle 'actions/download-artifact@d3f86
 Assert-NotContains -Text $publisherJobText -Needle 'Checkout exact signed PR head' -Name 'publisher never checks out reviewed PR code'
 Assert-Contains -Text $workflow -Needle 'retention-days: 1' -Name 'report handoff artifact has minimal retention'
 
+Assert-Contains -Text $caller -Needle '  pull_request_target:' -Name 'caller uses trusted-base pull_request_target'
+Assert-NotContains -Text $caller -Needle ([string][char]10 + '  pull_request:' + [string][char]10) -Name 'caller does not run PR-controlled pull_request workflow code'
 Assert-Contains -Text $caller -Needle 'github.event.pull_request.head.repo.full_name == github.repository' -Name 'caller rejects forks before allocating the reusable workflow'
+Assert-Contains -Text $caller -Needle 'github.event.pull_request.head.repo.id == github.event.pull_request.base.repo.id' -Name 'caller rejects repository-ID mismatch before allocation'
+Assert-Contains -Text $caller -Needle 'github.event.pull_request.base.ref == github.event.repository.default_branch' -Name 'caller rejects non-default base before allocation'
 Assert-Contains -Text $caller -Needle 'github.event.pull_request.draft == false' -Name 'caller rejects draft PRs before allocating the reusable workflow'
 Assert-Contains -Text $caller -Needle 'types: [opened, reopened, synchronize, ready_for_review]' -Name 'caller event allowlist matches governance'
 Assert-Contains -Text $caller -Needle '@REPLACE_WITH_PINNED_COMMIT_SHA' -Name 'caller requires a pinned infrastructure commit'
@@ -108,7 +112,9 @@ Assert-Contains -Text $workflow -Needle '-ForbiddenIdentity $env:SIGNING_RUNNER_
 Assert-Contains -Text $workflow -Needle '-ExpectedTrustedKeyFingerprint $env:SIGNING_KEY_FINGERPRINT' -Name 'review public-key copy must match signing key fingerprint'
 
 
+Assert-Contains -Text $workflow -Needle "github.event_name == 'pull_request_target'" -Name 'reusable workflow requires trusted-base event before runner allocation'
 Assert-Contains -Text $workflow -Needle 'contains(fromJSON(' -Name 'reusable workflow enforces an event-action allowlist before runner allocation'
+Assert-Contains -Text $workflow -Needle "-EventName 'pull_request_target'" -Name 'context parser receives trusted-base event name'
 Assert-Contains -Text $workflow -Needle 'github.event.pull_request.draft == false' -Name 'reusable workflow rejects draft PRs before signing runner allocation'
 Assert-Contains -Text $workflow -Needle 'github.event.pull_request.head.repo.id == github.event.pull_request.base.repo.id' -Name 'reusable workflow rejects repository-ID mismatches before signing runner allocation'
 Assert-Contains -Text $workflow -Needle 'github.event.pull_request.head.repo.full_name == github.repository' -Name 'reusable workflow rejects cross-repository heads before signing runner allocation'
@@ -140,20 +146,10 @@ Assert-Contains -Text $publisherJobText -Needle 'actions/create-github-app-token
 Assert-NotContains -Text $workflow -Needle 'actions/create-github-app-token@v' -Name 'GitHub App token action must not use a floating tag'
 Assert-NotContains -Text $reviewJobText -Needle 'reporter_app_private_key' -Name 'review job never materializes GitHub App private key'
 Assert-Contains -Text $publisherJobText -Needle ('private-key: $' + '{{ secrets.reporter_app_private_key }}') -Name 'GitHub App private key is scoped to publisher token creation'
-Assert-Contains -Text $publisherJobText -Needle ('AGY_REPORTER_TOKEN: 
-Assert-Contains -Text $publisherJobText -Needle "if: inputs.reporter_app_client_id != ''" -Name 'GitHub App publisher path is explicit'
-Assert-Contains -Text $publisherJobText -Needle "if: inputs.reporter_app_client_id == ''" -Name 'fallback token publisher path is mutually exclusive'
-Assert-Contains -Text $caller -Needle 'reporter_app_client_id:' -Name 'caller exposes GitHub App reporter client ID'
-Assert-Contains -Text $caller -Needle 'reporter_app_private_key:' -Name 'caller maps GitHub App reporter private key explicitly'
-
-Assert-Contains -Text $caller -Needle 'REPLACE_WITH_INFRASTRUCTURE_REPOSITORY/.github/workflows/review.yml@REPLACE_WITH_PINNED_COMMIT_SHA' -Name 'caller template requires explicit infrastructure repository and immutable commit'
-Assert-Contains -Text $caller -Needle 'signing_runner_label: REPLACE_WITH_SIGNING_RUNNER_LABEL' -Name 'caller template requires a deployment-specific signing runner'
-Assert-Contains -Text $caller -Needle 'review_runner_label: REPLACE_WITH_REVIEW_RUNNER_LABEL' -Name 'caller template requires a deployment-specific review runner'
-Assert-Contains -Text $caller -Needle 'publisher_runner_label: REPLACE_WITH_PUBLISHER_RUNNER_LABEL' -Name 'caller template requires a deployment-specific publisher runner'
-Assert-Contains -Text $caller -Needle "expected_reporter_login: 'REPLACE_WITH_REPORTER_LOGIN'" -Name 'caller template requires a deployment-specific reporter identity'
- + '{{ steps.reporter_app.outputs.token }}') -Name 'GitHub App installation token feeds only the publisher script'
+Assert-Contains -Text $publisherJobText -Needle ('AGY_REPORTER_TOKEN: $' + '{{ steps.reporter_app.outputs.token }}') -Name 'GitHub App installation token feeds only the publisher script'
 Assert-Contains -Text $publisherJobText -Needle 'permission-pull-requests: write' -Name 'GitHub App token is explicitly limited to pull-request write permission'
-Assert-Contains -Text $publisherJobText -Needle ('repositories: 
+Assert-Contains -Text $publisherJobText -Needle ('repositories: $' + '{{ github.event.repository.name }}') -Name 'GitHub App token is explicitly scoped to the current repository'
+Assert-Contains -Text $publisherJobText -Needle ('owner: $' + '{{ github.repository_owner }}') -Name 'GitHub App token owner scope is explicit'
 Assert-Contains -Text $publisherJobText -Needle "if: inputs.reporter_app_client_id != ''" -Name 'GitHub App publisher path is explicit'
 Assert-Contains -Text $publisherJobText -Needle "if: inputs.reporter_app_client_id == ''" -Name 'fallback token publisher path is mutually exclusive'
 Assert-Contains -Text $caller -Needle 'reporter_app_client_id:' -Name 'caller exposes GitHub App reporter client ID'
@@ -164,30 +160,6 @@ Assert-Contains -Text $caller -Needle 'signing_runner_label: REPLACE_WITH_SIGNIN
 Assert-Contains -Text $caller -Needle 'review_runner_label: REPLACE_WITH_REVIEW_RUNNER_LABEL' -Name 'caller template requires a deployment-specific review runner'
 Assert-Contains -Text $caller -Needle 'publisher_runner_label: REPLACE_WITH_PUBLISHER_RUNNER_LABEL' -Name 'caller template requires a deployment-specific publisher runner'
 Assert-Contains -Text $caller -Needle "expected_reporter_login: 'REPLACE_WITH_REPORTER_LOGIN'" -Name 'caller template requires a deployment-specific reporter identity'
- + '{{ github.event.repository.name }}') -Name 'GitHub App token is explicitly scoped to the current repository'
-Assert-Contains -Text $publisherJobText -Needle ('owner: 
-Assert-Contains -Text $publisherJobText -Needle "if: inputs.reporter_app_client_id != ''" -Name 'GitHub App publisher path is explicit'
-Assert-Contains -Text $publisherJobText -Needle "if: inputs.reporter_app_client_id == ''" -Name 'fallback token publisher path is mutually exclusive'
-Assert-Contains -Text $caller -Needle 'reporter_app_client_id:' -Name 'caller exposes GitHub App reporter client ID'
-Assert-Contains -Text $caller -Needle 'reporter_app_private_key:' -Name 'caller maps GitHub App reporter private key explicitly'
-
-Assert-Contains -Text $caller -Needle 'REPLACE_WITH_INFRASTRUCTURE_REPOSITORY/.github/workflows/review.yml@REPLACE_WITH_PINNED_COMMIT_SHA' -Name 'caller template requires explicit infrastructure repository and immutable commit'
-Assert-Contains -Text $caller -Needle 'signing_runner_label: REPLACE_WITH_SIGNING_RUNNER_LABEL' -Name 'caller template requires a deployment-specific signing runner'
-Assert-Contains -Text $caller -Needle 'review_runner_label: REPLACE_WITH_REVIEW_RUNNER_LABEL' -Name 'caller template requires a deployment-specific review runner'
-Assert-Contains -Text $caller -Needle 'publisher_runner_label: REPLACE_WITH_PUBLISHER_RUNNER_LABEL' -Name 'caller template requires a deployment-specific publisher runner'
-Assert-Contains -Text $caller -Needle "expected_reporter_login: 'REPLACE_WITH_REPORTER_LOGIN'" -Name 'caller template requires a deployment-specific reporter identity'
- + '{{ github.repository_owner }}') -Name 'GitHub App token owner scope is explicit'
-Assert-Contains -Text $publisherJobText -Needle "if: inputs.reporter_app_client_id != ''" -Name 'GitHub App publisher path is explicit'
-Assert-Contains -Text $publisherJobText -Needle "if: inputs.reporter_app_client_id == ''" -Name 'fallback token publisher path is mutually exclusive'
-Assert-Contains -Text $caller -Needle 'reporter_app_client_id:' -Name 'caller exposes GitHub App reporter client ID'
-Assert-Contains -Text $caller -Needle 'reporter_app_private_key:' -Name 'caller maps GitHub App reporter private key explicitly'
-
-Assert-Contains -Text $caller -Needle 'REPLACE_WITH_INFRASTRUCTURE_REPOSITORY/.github/workflows/review.yml@REPLACE_WITH_PINNED_COMMIT_SHA' -Name 'caller template requires explicit infrastructure repository and immutable commit'
-Assert-Contains -Text $caller -Needle 'signing_runner_label: REPLACE_WITH_SIGNING_RUNNER_LABEL' -Name 'caller template requires a deployment-specific signing runner'
-Assert-Contains -Text $caller -Needle 'review_runner_label: REPLACE_WITH_REVIEW_RUNNER_LABEL' -Name 'caller template requires a deployment-specific review runner'
-Assert-Contains -Text $caller -Needle 'publisher_runner_label: REPLACE_WITH_PUBLISHER_RUNNER_LABEL' -Name 'caller template requires a deployment-specific publisher runner'
-Assert-Contains -Text $caller -Needle "expected_reporter_login: 'REPLACE_WITH_REPORTER_LOGIN'" -Name 'caller template requires a deployment-specific reporter identity'
-
 
 Assert-Contains -Text $reviewJobText -Needle '-ExpectedBaseSha $env:TARGET_BASE' -Name 'review live-state check binds the trusted base SHA'
 Assert-Contains -Text $reviewJobText -Needle '-ExpectedBaseRef $env:TARGET_BASE_REF' -Name 'review live-state check binds the trusted base branch'

@@ -24,7 +24,11 @@ Use an exact 40-character Antigravity-CI commit SHA in every caller workflow. Do
 
 Generate an initial caller with `scripts/New-AntigravityCaller.ps1` and an initial project config with `scripts/New-ProjectConfig.ps1`. Review the generated files before committing them to a target repository.
 
-The reusable workflow rejects forks, draft pull requests, non-default target branches, repository-ID mismatches, and unapproved pull-request actions before allocating the signing runner. The same checks are repeated inside trusted PowerShell code.
+The target-repository caller uses `pull_request_target` so the caller workflow itself is loaded from the trusted base branch rather than from the pull-request merge commit. Keep that caller minimal: it should apply only pre-allocation guards and call the reusable workflow at an exact infrastructure commit. Do not add caller steps that execute pull-request code.
+
+The reusable workflow rejects forks, draft pull requests, non-default target branches, repository-ID mismatches, and unapproved pull-request actions before allocating the signing runner. The same checks are repeated inside trusted PowerShell code. The signing job may inspect and rewrite same-repository PR Git history, but it must not execute project code. Project code is executed only on the isolated review runner after the exact signed head is established and without signing or publisher credentials.
+
+If a target repository is later made public, its GitHub Actions event policy must explicitly allow `pull_request_target`. Do not work around that policy by switching the privileged caller back to `pull_request`, because that would make the caller workflow PR-controlled again.
 
 ## Fresh-turn boundary
 
