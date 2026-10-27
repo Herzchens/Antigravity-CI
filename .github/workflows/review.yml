@@ -1,0 +1,310 @@
+name: Antigravity Review
+
+on:
+  workflow_call:
+    inputs:
+      signing_runner_label:
+        description: Deployment-specific label for the signing runner.
+        required: true
+        type: string
+      review_runner_label:
+        description: Deployment-specific label for the AGY review runner.
+        required: true
+        type: string
+      trusted_public_key_path:
+        description: Absolute path to the trusted SSH public signing key on both runners.
+        required: true
+        type: string
+      expected_reporter_login:
+        description: GitHub login expected to own the AGY report comment.
+        required: true
+        type: string
+      agy_executable:
+        description: Antigravity CLI executable or absolute path.
+        required: false
+        default: agy
+        type: string
+      print_timeout_seconds:
+        description: Antigravity headless timeout before the wrapper hard timeout.
+        required: false
+        default: 1200
+        type: number
+      allow_adb:
+        description: Deployment ceiling for ADB access requested by trusted project config.
+        required: false
+        default: false
+        type: boolean
+      allow_network:
+        description: Deployment ceiling for network access requested by trusted project config.
+        required: false
+        default: false
+        type: boolean
+      allow_gui:
+        description: Deployment ceiling for GUI automation requested by trusted project config.
+        required: false
+        default: false
+        type: boolean
+    secrets:
+      signing_push_token:
+        description: Dedicated write credential used only to update the signed PR branch. Must trigger pull_request synchronize events.
+        required: true
+      reporter_token:
+        description: Credential for the distinct report-publisher identity.
+        required: true
+      infrastructure_read_token:
+        description: Optional read credential for this workflow repository when it is private and differs from the caller repository.
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: antigravity-review-${{ github.repository_id }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  sign:
+    if: github.event_name == 'pull_request'
+    runs-on: [self-hosted, Windows, "${{ inputs.signing_runner_label }}"]
+    permissions:
+      contents: read
+    outputs:
+      rewritten: ${{ steps.sign.outputs.rewritten }}
+      signed_head: ${{ steps.sign.outputs.signed_head }}
+    steps:
+      - name: Checkout exact PR head for signing
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: true
+          token: ${{ secrets.signing_push_token }}
+          path: target
+
+      - name: Checkout trusted Antigravity-CI implementation
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+          token: ${{ secrets.infrastructure_read_token != '' && secrets.infrastructure_read_token || github.token }}
+          path: infrastructure
+
+      - name: Validate PR context and sign exact feature history
+        id: sign
+        shell: pwsh
+        env:
+          TARGET_REPOSITORY: ${{ github.repository }}
+          EXPECTED_BASE_REF: ${{ github.event.repository.default_branch }}
+          TARGET_PATH: ${{ github.workspace }}\target
+          INFRA_PATH: ${{ github.workspace }}\infrastructure
+          TRUSTED_PUBLIC_KEY_PATH: ${{ inputs.trusted_public_key_path }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $context = & (Join-Path $env:INFRA_PATH 'scripts\Resolve-PullRequestContext.ps1') `
+            -EventPath $env:GITHUB_EVENT_PATH `
+            -EventName 'pull_request' `
+            -ExpectedRepository $env:TARGET_REPOSITORY `
+            -ExpectedBaseRef $env:EXPECTED_BASE_REF
+
+          $mergeBase = (& git -C $env:TARGET_PATH merge-base $context.BaseSha $context.HeadSha).Trim().ToLowerInvariant()
+          if ($mergeBase -notmatch '^[0-9a-f]{40}$') {
+            throw 'Unable to resolve the PR merge base.'
+          }
+
+          $result = & (Join-Path $env:INFRA_PATH 'scripts\Invoke-SigningGate.ps1') `
+            -RepositoryPath $env:TARGET_PATH `
+            -BaseSha $mergeBase `
+            -HeadSha $context.HeadSha `
+            -BranchName $context.HeadRef `
+            -TrustedPublicKey $env:TRUSTED_PUBLIC_KEY_PATH `
+            -ExpectedRemoteHead $context.HeadSha `
+            -Push
+
+          $rewritten = $result.RewritePerformed.ToString().ToLowerInvariant()
+          Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "rewritten=$rewritten" -Encoding utf8
+          Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "signed_head=$($result.SignedHeadSha)" -Encoding utf8
+
+          if ($result.RewritePerformed -and -not $result.Pushed) {
+            throw 'Signing gate rewrote history without updating the PR branch.'
+          }
+
+      - name: Explain signing synchronization barrier
+        if: steps.sign.outputs.rewritten == 'true'
+        shell: pwsh
+        run: |
+          Write-Host 'Signed history was pushed. This run stops before AGY review.'
+          Write-Host 'The credential used for the push must produce a fresh pull_request synchronize run for the signed head.'
+
+  review:
+    needs: sign
+    if: needs.sign.outputs.rewritten == 'false' && needs.sign.outputs.signed_head == github.event.pull_request.head.sha
+    runs-on: [self-hosted, Windows, "${{ inputs.review_runner_label }}"]
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Checkout exact signed PR head without credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+          path: target
+
+      - name: Checkout trusted Antigravity-CI implementation
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+          token: ${{ secrets.infrastructure_read_token != '' && secrets.infrastructure_read_token || github.token }}
+          path: infrastructure
+
+      - name: Revalidate exact PR head
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          TARGET_REPOSITORY: ${{ github.repository }}
+          TARGET_PR: ${{ github.event.pull_request.number }}
+          TARGET_HEAD: ${{ github.event.pull_request.head.sha }}
+          INFRA_PATH: ${{ github.workspace }}\infrastructure
+        run: |
+          & (Join-Path $env:INFRA_PATH 'scripts\Assert-CurrentPullRequestHead.ps1') `
+            -Repository $env:TARGET_REPOSITORY `
+            -PrNumber ([int] $env:TARGET_PR) `
+            -ExpectedHeadSha $env:TARGET_HEAD | Out-Null
+
+      - name: Prepare trusted exact-head review
+        shell: pwsh
+        env:
+          TARGET_REPOSITORY: ${{ github.repository }}
+          TARGET_PR: ${{ github.event.pull_request.number }}
+          TARGET_BASE: ${{ github.event.pull_request.base.sha }}
+          TARGET_HEAD: ${{ github.event.pull_request.head.sha }}
+          TARGET_PATH: ${{ github.workspace }}\target
+          INFRA_PATH: ${{ github.workspace }}\infrastructure
+          TRUSTED_PUBLIC_KEY_PATH: ${{ inputs.trusted_public_key_path }}
+          REVIEW_RUN_ID: ${{ github.run_id }}.${{ github.run_attempt }}
+        run: |
+          $stateRoot = Join-Path $env:RUNNER_TEMP ('antigravity-ci\' + $env:GITHUB_RUN_ID + '-' + $env:GITHUB_RUN_ATTEMPT)
+          Remove-Item -LiteralPath $stateRoot -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Path $stateRoot -Force | Out-Null
+
+          & (Join-Path $env:INFRA_PATH 'scripts\Prepare-AgyReview.ps1') `
+            -RepositoryPath $env:TARGET_PATH `
+            -BaseSha $env:TARGET_BASE `
+            -HeadSha $env:TARGET_HEAD `
+            -Repository $env:TARGET_REPOSITORY `
+            -PrNumber ([int] $env:TARGET_PR) `
+            -RunId $env:REVIEW_RUN_ID `
+            -TrustedPublicKey $env:TRUSTED_PUBLIC_KEY_PATH `
+            -OutputDirectory $stateRoot | Out-Null
+
+      - name: Enforce deployment capability ceiling
+        shell: pwsh
+        env:
+          INFRA_PATH: ${{ github.workspace }}\infrastructure
+          ALLOW_ADB: ${{ inputs.allow_adb }}
+          ALLOW_NETWORK: ${{ inputs.allow_network }}
+          ALLOW_GUI: ${{ inputs.allow_gui }}
+        run: |
+          $stateRoot = Join-Path $env:RUNNER_TEMP ('antigravity-ci\' + $env:GITHUB_RUN_ID + '-' + $env:GITHUB_RUN_ATTEMPT)
+
+          $capabilityParameters = @{
+            ProjectConfigPath = Join-Path $stateRoot 'trusted-project.json'
+            AllowAdb = [System.Convert]::ToBoolean($env:ALLOW_ADB)
+            AllowNetwork = [System.Convert]::ToBoolean($env:ALLOW_NETWORK)
+            AllowGui = [System.Convert]::ToBoolean($env:ALLOW_GUI)
+          }
+
+          & (Join-Path $env:INFRA_PATH 'scripts\Test-ProjectCapabilities.ps1') @capabilityParameters | Out-Null
+
+      - name: Run isolated Antigravity review
+        shell: pwsh
+        env:
+          TARGET_REPOSITORY: ${{ github.repository }}
+          TARGET_PR: ${{ github.event.pull_request.number }}
+          TARGET_HEAD: ${{ github.event.pull_request.head.sha }}
+          TARGET_PATH: ${{ github.workspace }}\target
+          INFRA_PATH: ${{ github.workspace }}\infrastructure
+          REVIEW_RUN_ID: ${{ github.run_id }}.${{ github.run_attempt }}
+          AGY_EXECUTABLE: ${{ inputs.agy_executable }}
+          AGY_PRINT_TIMEOUT: ${{ inputs.print_timeout_seconds }}
+        run: |
+          $stateRoot = Join-Path $env:RUNNER_TEMP ('antigravity-ci\' + $env:GITHUB_RUN_ID + '-' + $env:GITHUB_RUN_ATTEMPT)
+
+          & (Join-Path $env:INFRA_PATH 'scripts\Invoke-AgyReview.ps1') `
+            -RepositoryPath $env:TARGET_PATH `
+            -PromptPath (Join-Path $stateRoot 'agy-prompt.txt') `
+            -ReportSchemaPath (Join-Path $env:INFRA_PATH 'schemas\agy-report.schema.json') `
+            -OutputPath (Join-Path $stateRoot 'agy-report.json') `
+            -EnvelopePath (Join-Path $stateRoot 'agy-envelope.json') `
+            -ExpectedRepository $env:TARGET_REPOSITORY `
+            -ExpectedPr ([int] $env:TARGET_PR) `
+            -ExpectedHeadSha $env:TARGET_HEAD `
+            -ExpectedRunId $env:REVIEW_RUN_ID `
+            -AgyExecutable $env:AGY_EXECUTABLE `
+            -PrintTimeoutSeconds ([int] $env:AGY_PRINT_TIMEOUT) | Out-Null
+
+      - name: Publish report with distinct identity
+        shell: pwsh
+        env:
+          AGY_REPORTER_TOKEN: ${{ secrets.reporter_token }}
+          TARGET_REPOSITORY: ${{ github.repository }}
+          TARGET_PR: ${{ github.event.pull_request.number }}
+          TARGET_HEAD: ${{ github.event.pull_request.head.sha }}
+          INFRA_PATH: ${{ github.workspace }}\infrastructure
+          REVIEW_RUN_ID: ${{ github.run_id }}.${{ github.run_attempt }}
+          EXPECTED_REPORTER_LOGIN: ${{ inputs.expected_reporter_login }}
+        run: |
+          $stateRoot = Join-Path $env:RUNNER_TEMP ('antigravity-ci\' + $env:GITHUB_RUN_ID + '-' + $env:GITHUB_RUN_ATTEMPT)
+
+          & (Join-Path $env:INFRA_PATH 'scripts\Publish-AgyReport.ps1') `
+            -ReportPath (Join-Path $stateRoot 'agy-report.json') `
+            -ExpectedRepository $env:TARGET_REPOSITORY `
+            -ExpectedPr ([int] $env:TARGET_PR) `
+            -ExpectedHeadSha $env:TARGET_HEAD `
+            -ExpectedRunId $env:REVIEW_RUN_ID `
+            -ExpectedReporterLogin $env:EXPECTED_REPORTER_LOGIN | Out-Null
+
+      - name: Dispose reviewed workspace and review state
+        if: always()
+        shell: pwsh
+        env:
+          TARGET_PATH: ${{ github.workspace }}\target
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          function Remove-TreeWithRetry {
+            param(
+              [Parameter(Mandatory)]
+              [string] $Path
+            )
+
+            if (-not (Test-Path -LiteralPath $Path)) {
+              return
+            }
+
+            for ($attempt = 1; $attempt -le 3; $attempt++) {
+              try {
+                Remove-Item -LiteralPath $Path -Recurse -Force -ErrorAction Stop
+                return
+              }
+              catch {
+                if ($attempt -eq 3) {
+                  throw
+                }
+
+                Start-Sleep -Seconds 1
+              }
+            }
+          }
+
+          Remove-TreeWithRetry -Path $env:TARGET_PATH
+
+          $stateRoot = Join-Path $env:RUNNER_TEMP ('antigravity-ci\' + $env:GITHUB_RUN_ID + '-' + $env:GITHUB_RUN_ATTEMPT)
+          Remove-TreeWithRetry -Path $stateRoot
