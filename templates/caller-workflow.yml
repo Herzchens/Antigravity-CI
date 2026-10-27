@@ -1,0 +1,27 @@
+name: Antigravity CI
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, ready_for_review]
+
+permissions:
+  contents: read
+
+jobs:
+  review:
+    if: github.event.pull_request.draft == false && github.event.pull_request.head.repo.full_name == github.repository
+    uses: Herzchens/Antigravity-CI/.github/workflows/review.yml@REPLACE_WITH_PINNED_COMMIT_SHA
+    with:
+      signing_runner_label: antigravity-signing
+      review_runner_label: antigravity-review
+      trusted_public_key_path: 'C:\Users\Herzchen\.ssh\id_ed25519.pub'
+      expected_reporter_login: 'Herzchen-AGY[bot]'
+      agy_executable: agy
+      print_timeout_seconds: 1200
+      allow_adb: false
+      allow_network: false
+      allow_gui: false
+    secrets:
+      signing_push_token: ${{ secrets.ANTIGRAVITY_SIGNING_PUSH_TOKEN }}
+      reporter_token: ${{ secrets.ANTIGRAVITY_REPORTER_TOKEN }}
+      infrastructure_read_token: ${{ secrets.ANTIGRAVITY_INFRA_READ_TOKEN }}
