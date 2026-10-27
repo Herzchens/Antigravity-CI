@@ -20,6 +20,7 @@ function Write-EventFixture {
         pull_request = [ordered]@{
             number = 17
             draft = $false
+            user = [ordered]@{ login = 'Herzchens' }
             base = [ordered]@{
                 ref = 'main'
                 sha = '1111111111111111111111111111111111111111'
@@ -43,6 +44,7 @@ function Write-EventFixture {
         switch ($key) {
             'action' { $event.action = $Overrides[$key] }
             'draft' { $event.pull_request.draft = $Overrides[$key] }
+            'author_login' { $event.pull_request.user.login = $Overrides[$key] }
             'base_ref' { $event.pull_request.base.ref = $Overrides[$key] }
             'base_sha' { $event.pull_request.base.sha = $Overrides[$key] }
             'base_repo' { $event.pull_request.base.repo.full_name = $Overrides[$key] }
@@ -93,6 +95,7 @@ $common = @{
     EventName = 'pull_request_target'
     ExpectedRepository = 'Herzchens/Antigravity-CI'
     ExpectedBaseRef = 'main'
+    ExpectedAuthorLogin = 'Herzchens'
 }
 
 try {
@@ -140,6 +143,14 @@ try {
     $differentIdParameters.EventPath = $sameNameDifferentIdPath
     Assert-Throws -Name 'repository ID mismatch is rejected' -Action {
         & $gate @differentIdParameters
+    }
+
+    $unauthorizedPath = Join-Path $tempRoot 'unauthorized-author.json'
+    Write-EventFixture -Path $unauthorizedPath -Overrides @{ author_login = 'Collaborator' }
+    $unauthorizedParameters = $common.Clone()
+    $unauthorizedParameters.EventPath = $unauthorizedPath
+    Assert-Throws -Name 'same-repository unauthorized PR author is rejected' -Action {
+        & $gate @unauthorizedParameters
     }
 
     $draftPath = Join-Path $tempRoot 'draft.json'

@@ -108,6 +108,8 @@ Assert-Contains -Text $caller -Needle 'github.event.pull_request.base.ref == git
 Assert-Contains -Text $caller -Needle 'github.event.pull_request.base.repo.full_name == github.repository' -Name 'caller requires the trusted base repository'
 Assert-Contains -Text $caller -Needle 'github.event.pull_request.head.repo.full_name == github.repository' -Name 'caller rejects fork or cross-repository heads'
 Assert-Contains -Text $caller -Needle 'github.event.pull_request.head.repo.id == github.event.pull_request.base.repo.id' -Name 'caller binds repository identity by immutable ID'
+Assert-Contains -Text $caller -Needle "github.event.pull_request.user.login == 'REPLACE_WITH_AUTHORIZED_PR_LOGIN_CONDITION'" -Name 'caller authorizes PR signing before allocation'
+Assert-Contains -Text $caller -Needle "authorized_pr_login: 'REPLACE_WITH_AUTHORIZED_PR_LOGIN_INPUT'" -Name 'caller passes the same authorized login to the reusable workflow'
 Assert-Contains -Text $caller -Needle 'REPLACE_WITH_INFRASTRUCTURE_REPOSITORY/.github/workflows/review.yml@REPLACE_WITH_PINNED_COMMIT_SHA' -Name 'caller pins the reusable workflow by exact infrastructure commit'
 Assert-NotContains -Text $caller -Needle 'secrets: inherit' -Name 'caller maps secrets explicitly'
 Assert-Contains -Text $caller -Needle '  pull-requests: read' -Name 'caller grants the reusable workflow pull-request read permission'
@@ -119,6 +121,8 @@ Assert-Contains -Text $workflow -Needle 'github.event.pull_request.draft == fals
 Assert-Contains -Text $workflow -Needle 'github.event.pull_request.base.ref == github.event.repository.default_branch' -Name 'reusable workflow repeats base-branch validation'
 Assert-Contains -Text $workflow -Needle 'github.event.pull_request.head.repo.full_name == github.repository' -Name 'reusable workflow repeats same-repository validation'
 Assert-Contains -Text $workflow -Needle 'github.event.pull_request.head.repo.id == github.event.pull_request.base.repo.id' -Name 'reusable workflow repeats repository-ID validation'
+Assert-Contains -Text $workflow -Needle 'github.event.pull_request.user.login == inputs.authorized_pr_login' -Name 'sign job rechecks authorized PR author'
+Assert-Contains -Text $workflow -Needle '-ExpectedAuthorLogin $env:AUTHORIZED_PR_LOGIN' -Name 'PR context resolver rechecks authorized PR author'
 
 $signJobText = Get-JobText -Start '  sign:' -End '  review:'
 $reviewJobText = Get-JobText -Start '  review:' -End '  publisher:'
