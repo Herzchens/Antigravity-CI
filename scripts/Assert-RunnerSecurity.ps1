@@ -18,6 +18,8 @@ param(
 
     [string] $HomeDirectory = $HOME,
 
+    [string] $ProtectedReadProbeManifest,
+
     [ValidateRange(1, 99999)]
     [int] $MinimumWindowsBuild = 26100
 )
@@ -246,6 +248,24 @@ if (-not (Test-Path -LiteralPath $hostPolicy -PathType Leaf)) {
 }
 $hostPolicyResult = & $hostPolicy -HomeDirectory $resolvedHomeDirectory
 
+$filesystemBoundary = Join-Path $PSScriptRoot 'Test-ReviewFilesystemBoundary.ps1'
+if (-not (Test-Path -LiteralPath $filesystemBoundary -PathType Leaf)) {
+    throw 'Test-ReviewFilesystemBoundary.ps1 is required next to Assert-RunnerSecurity.ps1.'
+}
+
+if ([string]::IsNullOrWhiteSpace($ProtectedReadProbeManifest)) {
+    $programData = [Environment]::GetFolderPath([Environment+SpecialFolder]::CommonApplicationData)
+    if ([string]::IsNullOrWhiteSpace($programData)) {
+        throw 'Unable to resolve ProgramData for the protected-read probe manifest.'
+    }
+
+    $ProtectedReadProbeManifest = Join-Path $programData 'Antigravity-CI\review-policy\protected-read-probes.json'
+}
+
+$filesystemBoundaryResult = & $filesystemBoundary `
+    -ManifestPath $ProtectedReadProbeManifest `
+    -HomeDirectory $resolvedHomeDirectory
+
 $agyCommand = Get-Command $AgyExecutable -CommandType Application -ErrorAction Stop |
     Select-Object -First 1
 $agyPath = [System.IO.Path]::GetFullPath($agyCommand.Source)
@@ -277,6 +297,7 @@ foreach ($requiredFlag in @(
     TrustedKeyFingerprint = $trustedFingerprint
     SshAgentIdentityCount = $agentKeys.Count
     AgySettingsSha256 = $hostPolicyResult.SettingsSha256
+    ProtectedReadProbeCount = $filesystemBoundaryResult.ProbeCount
     Valid = $true
     SandboxRuntimeStillRequiresSmokeTest = $true
 }
