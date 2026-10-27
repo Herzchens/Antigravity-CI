@@ -30,7 +30,13 @@ param(
     [ValidatePattern('^[0-9a-fA-F]{40}$')]
     [string] $ExpectedRemoteHead,
 
-    [string] $ExpectedRemoteUrl
+    [string] $ExpectedRemoteUrl,
+
+    [ValidateRange(1, 10000)]
+    [int] $MaxCommits = 250,
+
+    [ValidateRange(1024, 104857600)]
+    [long] $MaxCommitObjectBytes = 1048576
 )
 
 Set-StrictMode -Version Latest
@@ -226,11 +232,38 @@ function Test-TrustedSignature {
     }
 }
 
+function Assert-CommitObjectSize {
+    param(
+        [Parameter(Mandatory)]
+        [string] $Sha
+    )
+
+    $sizeLine = (
+        (Invoke-Git -Arguments @('cat-file', '-s', $Sha)).Output |
+        Select-Object -First 1
+    )
+
+    $objectSize = 0L
+    if ($null -eq $sizeLine -or
+        -not [long]::TryParse(([string] $sizeLine).Trim(), [ref] $objectSize) -or
+        $objectSize -lt 0) {
+        throw "Unable to determine commit object size for $Sha."
+    }
+
+    if ($objectSize -gt $MaxCommitObjectBytes) {
+        throw "Commit object $Sha exceeds the maximum allowed size of $MaxCommitObjectBytes bytes."
+    }
+
+    $objectSize
+}
+
 function Get-CommitObjectBytes {
     param(
         [Parameter(Mandatory)]
         [string] $Sha
     )
+
+    $null = Assert-CommitObjectSize -Sha $Sha
 
     $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
     $startInfo.FileName = 'git'
@@ -658,6 +691,27 @@ $originalHeadTree = (Invoke-Git -Arguments @(
 )).Output | Select-Object -First 1
 $originalHeadTree = $originalHeadTree.Trim()
 
+$commitCountLine = (
+    (Invoke-Git -Arguments @(
+        'rev-list',
+        '--count',
+        "--max-count=$($MaxCommits + 1)",
+        "$base..$head"
+    )).Output |
+    Select-Object -First 1
+)
+
+$commitCount = 0
+if ($null -eq $commitCountLine -or
+    -not [int]::TryParse(([string] $commitCountLine).Trim(), [ref] $commitCount) -or
+    $commitCount -lt 0) {
+    throw 'Unable to determine the number of commits in the signing range.'
+}
+
+if ($commitCount -gt $MaxCommits) {
+    throw "Signing range contains $commitCount commits, exceeding the maximum allowed $MaxCommits."
+}
+
 $commitLines = (Invoke-Git -Arguments @(
     'rev-list',
     '--reverse',
@@ -669,6 +723,10 @@ $commits = @($commitLines | Where-Object {
 } | ForEach-Object {
     $_.Trim().ToLowerInvariant()
 })
+
+if ($commits.Count -ne $commitCount) {
+    throw 'Enumerated signing range does not match the preflight commit count.'
+}
 
 if ($commits.Count -eq 0) {
     [pscustomobject]@{
@@ -695,6 +753,7 @@ try {
     $rewritePerformed = $false
 
     foreach ($oldCommit in $commits) {
+        $null = Assert-CommitObjectSize -Sha $oldCommit
         $record = Get-CommitRecord -Sha $oldCommit
 
         if ($record.Parents.Count -ne 1) {
