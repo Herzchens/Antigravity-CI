@@ -35,6 +35,55 @@ function Invoke-Checked {
     }
 }
 
+function Invoke-PrePushGuard {
+    param(
+        [Parameter(Mandatory)]
+        [string] $RepositoryPath,
+
+        [Parameter(Mandatory)]
+        [string] $InputText
+    )
+
+    $pwsh = (Get-Command pwsh -CommandType Application -ErrorAction Stop).Source
+    $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
+    $startInfo.FileName = $pwsh
+    $startInfo.UseShellExecute = $false
+    $startInfo.RedirectStandardInput = $true
+    $startInfo.RedirectStandardOutput = $true
+    $startInfo.RedirectStandardError = $true
+    $startInfo.ArgumentList.Add('-NoProfile')
+    $startInfo.ArgumentList.Add('-File')
+    $startInfo.ArgumentList.Add($guard)
+    $startInfo.ArgumentList.Add('-RepositoryPath')
+    $startInfo.ArgumentList.Add($RepositoryPath)
+    $startInfo.ArgumentList.Add('-PrePush')
+
+    $process = [System.Diagnostics.Process]::new()
+    $process.StartInfo = $startInfo
+
+    try {
+        if (-not $process.Start()) {
+            throw 'Unable to start pre-push guard fixture.'
+        }
+
+        $process.StandardInput.Write($InputText)
+        $process.StandardInput.Close()
+
+        $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+        $stderrTask = $process.StandardError.ReadToEndAsync()
+        $process.WaitForExit()
+
+        [pscustomobject]@{
+            ExitCode = $process.ExitCode
+            Stdout = $stdoutTask.GetAwaiter().GetResult()
+            Stderr = $stderrTask.GetAwaiter().GetResult()
+        }
+    }
+    finally {
+        $process.Dispose()
+    }
+}
+
 function Assert-Throws {
     param(
         [Parameter(Mandatory)]
@@ -80,6 +129,12 @@ try {
 
     Write-Host '[PASS] ordinary source names are not blocked'
 
+    Invoke-Checked -FilePath 'git' -Arguments @('commit', '--quiet', '-m', 'safe base') -WorkingDirectory $tempRoot
+    $remoteBase = (
+        Invoke-Checked -FilePath 'git' -Arguments @('rev-parse', 'HEAD') -WorkingDirectory $tempRoot |
+        Select-Object -First 1
+    ).Trim()
+
     Set-Content -LiteralPath (Join-Path $tempRoot 'PLAN2.md') -Value 'local only' -Encoding utf8NoBOM
     Invoke-Checked -FilePath 'git' -Arguments @('add', '-f', 'PLAN2.md') -WorkingDirectory $tempRoot
 
@@ -100,6 +155,20 @@ try {
     }
 
     Invoke-Checked -FilePath 'git' -Arguments @('rm', '-q', 'docs/Project-HANDOFF.txt') -WorkingDirectory $tempRoot
+    Invoke-Checked -FilePath 'git' -Arguments @('commit', '--quiet', '-m', 'remove local-only artifact') -WorkingDirectory $tempRoot
+    $cleanTip = (
+        Invoke-Checked -FilePath 'git' -Arguments @('rev-parse', 'HEAD') -WorkingDirectory $tempRoot |
+        Select-Object -First 1
+    ).Trim()
+
+    $prePushLine = "refs/heads/main $cleanTip refs/heads/main $remoteBase" + [Environment]::NewLine
+    $prePushResult = Invoke-PrePushGuard -RepositoryPath $tempRoot -InputText $prePushLine
+
+    if ($prePushResult.ExitCode -eq 0) {
+        throw 'Pre-push guard accepted a clean tip whose newly pushed history contains a local-only HANDOFF artifact.'
+    }
+
+    Write-Host '[PASS] pre-push rejects local-only artifacts hidden in intermediate commit history'
     Set-Content -LiteralPath (Join-Path $tempRoot 'src\AGENTS.md') -Value 'local governance' -Encoding utf8NoBOM
     Invoke-Checked -FilePath 'git' -Arguments @('add', '-f', 'src/AGENTS.md') -WorkingDirectory $tempRoot
 

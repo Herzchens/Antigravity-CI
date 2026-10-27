@@ -63,6 +63,24 @@ function Invoke-GitBytes {
     }
 }
 
+function Invoke-GitLines {
+    param(
+        [Parameter(Mandatory)]
+        [string[]] $Arguments
+    )
+
+    $output = @(& git -C $script:RepositoryRoot @Arguments 2>&1)
+    if ($LASTEXITCODE -ne 0) {
+        throw "git command failed with exit code $LASTEXITCODE."
+    }
+
+    @(
+        $output |
+        ForEach-Object { [string] $_ } |
+        Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+    )
+}
+
 function ConvertFrom-NulPaths {
     param(
         [Parameter(Mandatory)]
@@ -71,6 +89,7 @@ function ConvertFrom-NulPaths {
 
     $utf8 = [System.Text.UTF8Encoding]::new($false, $true)
     $paths = [System.Collections.Generic.List[string]]::new()
+$checkedCommitCount = 0
     $start = 0
 
     for ($index = 0; $index -le $Bytes.Length; $index++) {
@@ -156,7 +175,7 @@ if ($PSCmdlet.ParameterSetName -eq 'Staged') {
 }
 elseif ($PSCmdlet.ParameterSetName -eq 'PrePush') {
     $inputText = [Console]::In.ReadToEnd()
-    $seenShas = [System.Collections.Generic.HashSet[string]]::new(
+    $seenCommits = [System.Collections.Generic.HashSet[string]]::new(
         [System.StringComparer]::OrdinalIgnoreCase
     )
 
@@ -167,6 +186,8 @@ elseif ($PSCmdlet.ParameterSetName -eq 'PrePush') {
         }
 
         $localSha = $parts[1].ToLowerInvariant()
+        $remoteSha = $parts[3].ToLowerInvariant()
+
         if ($localSha -match '^0+$') {
             continue
         }
@@ -175,8 +196,29 @@ elseif ($PSCmdlet.ParameterSetName -eq 'PrePush') {
             throw 'Pre-push hook input contains an invalid local object ID.'
         }
 
-        if ($seenShas.Add($localSha)) {
-            foreach ($path in Get-PathsForRef -Commitish $localSha) {
+        if ($remoteSha -notmatch '^(?:0+|[0-9a-f]{40,64})$') {
+            throw 'Pre-push hook input contains an invalid remote object ID.'
+        }
+
+        $revisionArguments = if ($remoteSha -match '^0+$') {
+            @('rev-list', $localSha)
+        }
+        else {
+            @('rev-list', "$remoteSha..$localSha")
+        }
+
+        foreach ($commit in Invoke-GitLines -Arguments $revisionArguments) {
+            $commitSha = $commit.Trim().ToLowerInvariant()
+            if ($commitSha -notmatch '^[0-9a-f]{40,64}$') {
+                throw 'git rev-list returned an invalid commit object ID.'
+            }
+
+            if (-not $seenCommits.Add($commitSha)) {
+                continue
+            }
+
+            $checkedCommitCount++
+            foreach ($path in Get-PathsForRef -Commitish $commitSha) {
                 $paths.Add($path)
             }
         }
@@ -201,6 +243,7 @@ if ($violations.Count -gt 0) {
 
 [pscustomobject][ordered]@{
     CheckedPathCount = $paths.Count
+    CheckedCommitCount = $checkedCommitCount
     ViolationCount = 0
     Valid = $true
 }
