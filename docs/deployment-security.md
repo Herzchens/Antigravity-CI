@@ -25,7 +25,7 @@ Pass that 64-character hash as `AgySha256` when generating the caller workflow. 
 
 The review runner receives only a public copy of the trusted signing key. It must not have access to the signing account, SSH agent, publisher credential, or GitHub write credentials. Production deployments should prefer an ephemeral self-hosted review runner so one job receives a clean machine state. GitHub explicitly warns that persistent self-hosted runners can be persistently compromised by untrusted workflow code and recommends ephemeral runners for autoscaling.
 
-For an initial persistent Windows pilot, use a dedicated low-privilege Windows account, a dedicated runner label, the sandbox smoke test, workspace cleanup, capability ceilings, and the Windows kill-on-close process job. These controls are defense in depth; they do not turn a persistent runner into an ephemeral isolation boundary.
+For an initial persistent Windows pilot, use a dedicated low-privilege Windows account, a dedicated runner label, the sandbox smoke test, workspace cleanup, capability ceilings, and the Windows kill-on-close process job. These controls are defense in depth; they do not turn a persistent runner into an ephemeral isolation boundary. The sandbox smoke accepts an OS-enforced denial of a persistence primitive (for example, a low-privilege account that cannot register Scheduled Tasks) as a valid boundary; do not grant Administrator rights merely to make a control operation succeed.
 
 The review and publisher runner processes must also remain non-elevated. Do not install their runner services as LocalSystem or run them from an elevated terminal.
 
