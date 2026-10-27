@@ -135,3 +135,13 @@ Assert-Contains -Text $workflow -Needle ('SIGNING_PUSH_TOKEN: $' + '{{ secrets.s
 Assert-Contains -Text $workflow -Needle 'http.https://github.com/.extraheader' -Name 'signing push credential is process-scoped through Git config environment'
 Assert-Contains -Text $workflow -Needle '::add-mask::$encodedCredential' -Name 'derived signing credential is masked before use'
 Assert-Contains -Text $workflow -Needle '$env:SIGNING_PUSH_TOKEN = $null' -Name 'signing write token is cleared after the signing push attempt'
+
+Assert-Contains -Text $publisherJobText -Needle 'actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1' -Name 'GitHub App token action is full-SHA pinned'
+Assert-NotContains -Text $workflow -Needle 'actions/create-github-app-token@v' -Name 'GitHub App token action must not use a floating tag'
+Assert-NotContains -Text $reviewJobText -Needle 'reporter_app_private_key' -Name 'review job never materializes GitHub App private key'
+Assert-Contains -Text $publisherJobText -Needle ('private-key: $' + '{{ secrets.reporter_app_private_key }}') -Name 'GitHub App private key is scoped to publisher token creation'
+Assert-Contains -Text $publisherJobText -Needle ('AGY_REPORTER_TOKEN: $' + '{{ steps.reporter_app.outputs.token }}') -Name 'GitHub App installation token feeds only the publisher script'
+Assert-Contains -Text $publisherJobText -Needle "if: inputs.reporter_app_client_id != ''" -Name 'GitHub App publisher path is explicit'
+Assert-Contains -Text $publisherJobText -Needle "if: inputs.reporter_app_client_id == ''" -Name 'fallback token publisher path is mutually exclusive'
+Assert-Contains -Text $caller -Needle 'reporter_app_client_id:' -Name 'caller exposes GitHub App reporter client ID'
+Assert-Contains -Text $caller -Needle 'reporter_app_private_key:' -Name 'caller maps GitHub App reporter private key explicitly'
