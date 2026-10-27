@@ -590,6 +590,19 @@ try {
             throw "Antigravity CLI returned terminal status '$($envelope.status)'."
         }
 
+        $deniedProperty = $envelope.PSObject.Properties['denied_actions']
+        if ($null -ne $deniedProperty -and $null -ne $deniedProperty.Value) {
+            if ($deniedProperty.Value -is [string] -or
+                $deniedProperty.Value -isnot [System.Collections.IEnumerable]) {
+                throw 'Antigravity CLI returned malformed denied_actions.'
+            }
+
+            $deniedActions = @($deniedProperty.Value)
+            if ($deniedActions.Count -gt 0) {
+                throw "Antigravity CLI denied $($deniedActions.Count) requested action(s); review evidence is incomplete."
+            }
+        }
+
         $structuredProperty = $envelope.PSObject.Properties['structured_output']
         if ($null -eq $structuredProperty -or $null -eq $structuredProperty.Value) {
             throw 'Antigravity CLI did not return structured_output.'

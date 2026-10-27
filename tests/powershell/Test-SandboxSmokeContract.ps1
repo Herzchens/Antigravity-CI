@@ -48,6 +48,8 @@ Assert-Contains -Needle "-cnotin @('init', 'step_update', 'result')" -Name 'sand
 Assert-Contains -Needle "'init'" -Name 'sandbox smoke requires an init event'
 Assert-Contains -Needle "'result'" -Name 'sandbox smoke requires a terminal result event'
 Assert-Contains -Needle "'always-proceed'" -Name 'sandbox smoke rejects unsafe permission mode'
+Assert-Contains -Needle "PSObject.Properties['denied_actions']" -Name 'sandbox smoke inspects headless denied-action evidence'
+Assert-Contains -Needle 'requested action(s)' -Name 'sandbox smoke fails on any denied action'
 Assert-Contains -Needle '$streamWorkingDirectory.Equals(' -Name 'sandbox smoke binds the observed CLI cwd to the fixture workspace'
 Assert-Contains -Needle '@($initPayload.tools) -cnotcontains ''run_command''' -Name 'sandbox smoke requires run_command in the advertised tool set'
 Assert-Contains -Needle '$expectedProbeCommand = ''pwsh -NoProfile -File .\sandbox-probe.ps1''' -Name 'sandbox smoke defines the exact expected probe command'
