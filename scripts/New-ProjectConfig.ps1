@@ -52,6 +52,7 @@ function ConvertTo-StrictTomlString {
 function Add-CommandSection {
     param(
         [Parameter(Mandatory)]
+        [AllowEmptyCollection()]
         [AllowEmptyString()]
         [System.Collections.Generic.List[string]] $Lines,
 

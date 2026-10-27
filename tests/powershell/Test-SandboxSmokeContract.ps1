@@ -189,3 +189,21 @@ if ($null -eq $procRead -or $procRead.ReturnType -ne [System.Boolean] -or
     throw 'AntigravityCiProcessBoundary methods must be defined and return bool.'
 }
 Write-Host '[PASS] AntigravityCiProcessBoundary compiles with memory-read and termination probe methods'
+
+$idxProcessProbe = $smoke.IndexOf('public static class AntigravityCiProcessProbe')
+$idxEndProcessProbe = $smoke.IndexOf('$result.process_vm_read_handle_succeeded', $idxProcessProbe)
+if ($idxProcessProbe -lt 0 -or $idxEndProcessProbe -le $idxProcessProbe) {
+    throw 'Could not locate AntigravityCiProcessProbe definition in smoke script.'
+}
+$processProbeCode = 'using System; using System.Runtime.InteropServices; ' +
+    $smoke.Substring($idxProcessProbe, $idxEndProcessProbe - $idxProcessProbe)
+$processProbeCode = $processProbeCode.Substring(0, $processProbeCode.LastIndexOf('}') + 1)
+Add-Type -TypeDefinition $processProbeCode -Language CSharp -ErrorAction Stop
+
+$procProbeRead = [AntigravityCiProcessProbe].GetMethod('CanReadMemory', [type[]]@([int]))
+$procProbeTerm = [AntigravityCiProcessProbe].GetMethod('CanTerminate', [type[]]@([int]))
+if ($null -eq $procProbeRead -or $procProbeRead.ReturnType -ne [System.Boolean] -or
+    $null -eq $procProbeTerm -or $procProbeTerm.ReturnType -ne [System.Boolean]) {
+    throw 'AntigravityCiProcessProbe methods must be defined and return bool.'
+}
+Write-Host '[PASS] AntigravityCiProcessProbe compiles with memory-read and termination probe methods'
