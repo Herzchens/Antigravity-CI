@@ -65,6 +65,11 @@ Assert-Contains -Needle 'CredReadW' -Name 'sandbox smoke probes Windows Credenti
 Assert-Contains -Needle 'credential_probe_completed' -Name 'credential probe must actually execute before acceptance'
 Assert-Contains -Needle 'credential_read_succeeded' -Name 'credential read outcome is asserted'
 Assert-Contains -Needle 'CredentialManagerReadBlocked = $true' -Name 'Credential Manager isolation is an explicit acceptance invariant'
+Assert-Contains -Needle 'credential_write_probe_completed' -Name 'Credential Manager write probe must execute before acceptance'
+Assert-Contains -Needle 'credential_write_succeeded' -Name 'Credential Manager write-persistence outcome is asserted'
+Assert-Contains -Needle 'CredentialManagerWriteBlocked = $true' -Name 'Credential Manager write isolation is an explicit acceptance invariant'
+Assert-Contains -Needle '[AntigravityCiCredentialSentinel]::CanRead($credentialWriteTarget)' -Name 'host verifies the sandbox credential-write target did not persist'
+Assert-Contains -Needle '[AntigravityCiCredentialSentinel]::Delete($credentialWriteTarget)' -Name 'sandbox credential-write sentinel is deleted during cleanup'
 Assert-Contains -Needle '[AntigravityCiCredentialSentinel]::Delete($credentialTarget)' -Name 'credential sentinel is deleted during cleanup'
 
 Assert-Contains -Needle 'schtasks.exe /Create' -Name 'sandbox smoke probes Windows Task Scheduler registration'
