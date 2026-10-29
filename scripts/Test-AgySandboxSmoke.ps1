@@ -178,6 +178,48 @@ if (-not (Test-Path -LiteralPath $processJobHelper -PathType Leaf)) {
 
 . $processJobHelper
 
+function Initialize-AgySandboxSkeleton {
+    param(
+        [string] $HomeDirectory = $HOME
+    )
+
+    $skeletonDirs = @(
+        '.cache\ccache',
+        '.cargo',
+        '.ccache',
+        '.config\yarn',
+        '.deno',
+        '.dotnet\corefx\cryptography',
+        '.dzil',
+        '.gradle\caches',
+        '.local\share\uv',
+        '.m2',
+        '.nimble',
+        '.nuget',
+        '.nvm',
+        '.volta',
+        'AppData\Local\Volta',
+        'AppData\Local\Yarn',
+        'AppData\Local\ccache',
+        'AppData\Local\nvm',
+        'AppData\Local\pnpm',
+        'AppData\Roaming\npm',
+        'AppData\Roaming\nvm',
+        'AppData\Roaming\uv\data',
+        'AppData\Roaming\yarn',
+        'Library\Preferences',
+        'scoop'
+    )
+
+    foreach ($sub in $skeletonDirs) {
+        $targetDir = Join-Path $HomeDirectory $sub
+        if (-not (Test-Path -LiteralPath $targetDir -PathType Container)) {
+            New-Item -ItemType Directory -Path $targetDir -Force | Out-Null
+        }
+    }
+}
+
+
 $agyCommand = Get-Command $AgyExecutable -CommandType Application -ErrorAction Stop |
     Select-Object -First 1
 $agyPath = [System.IO.Path]::GetFullPath($agyCommand.Source)
@@ -230,6 +272,7 @@ $stderrStream = $null
 
 try {
     New-Item -ItemType Directory -Path $workspace -Force | Out-Null
+    Initialize-AgySandboxSkeleton -HomeDirectory $HOME
     New-Item -ItemType Directory -Path $sshDirectory -Force | Out-Null
 
     [System.IO.File]::WriteAllText(
