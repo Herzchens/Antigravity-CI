@@ -54,17 +54,57 @@ public static class UserProfileHelper {
 "@
 }
 
+$sandboxSkeletonDirs = @(
+    '.cache\ccache',
+    '.cargo',
+    '.ccache',
+    '.config\yarn',
+    '.deno',
+    '.dotnet\corefx\cryptography',
+    '.dzil',
+    '.gradle\caches',
+    '.local\share\uv',
+    '.m2',
+    '.nimble',
+    '.nuget',
+    '.nvm',
+    '.volta',
+    'AppData\Local\Volta',
+    'AppData\Local\Yarn',
+    'AppData\Local\ccache',
+    'AppData\Local\nvm',
+    'AppData\Local\pnpm',
+    'AppData\Roaming\npm',
+    'AppData\Roaming\nvm',
+    'AppData\Roaming\uv\data',
+    'AppData\Roaming\yarn',
+    'Library\Preferences',
+    'scoop'
+)
+
 foreach ($acc in $Accounts) {
     $user = Get-LocalUser -Name $acc -ErrorAction Stop
     $sid = $user.SID.Value
     $profile = Get-CimInstance Win32_UserProfile | Where-Object { $_.SID -eq $sid } | Select-Object -First 1
+    $profilePath = $null
     if ($null -ne $profile -and (Test-Path -LiteralPath $profile.LocalPath)) {
         Write-Host "[OK] Profile for $acc already exists: $($profile.LocalPath)"
-        continue
+        $profilePath = $profile.LocalPath
     }
-    Write-Host "Creating Windows profile for $acc ($sid)..."
-    $path = [UserProfileHelper]::Create($sid, $acc)
-    Write-Host "[OK] Profile for $acc initialized: $path"
+    else {
+        Write-Host "Creating Windows profile for $acc ($sid)..."
+        $profilePath = [UserProfileHelper]::Create($sid, $acc)
+        Write-Host "[OK] Profile for $acc initialized: $profilePath"
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($profilePath) -and (Test-Path -LiteralPath $profilePath)) {
+        foreach ($sub in $sandboxSkeletonDirs) {
+            $targetDir = Join-Path $profilePath $sub
+            if (-not (Test-Path -LiteralPath $targetDir -PathType Container)) {
+                New-Item -ItemType Directory -Path $targetDir -Force | Out-Null
+            }
+        }
+    }
 }
 
 Write-Host "All runner profiles initialized successfully."
