@@ -41,4 +41,28 @@ Assert-Contains -Needle 'Protect-File -Path $trustedPublicKeyPath -ReviewSid $re
 Assert-Contains -Needle 'Assert-NotAdministrator -UserName $ReviewUserName' -Name 'operator setup removes Review from local Administrators'
 Assert-Contains -Needle 'Assert-NotAdministrator -UserName $PublisherUserName' -Name 'operator setup removes Publisher from local Administrators'
 
+Assert-Contains -Needle "[string] `$ReviewUserName = 'agci-review'" -Name 'canonical review technical username is agci-review'
+Assert-Contains -Needle "[string] `$ReviewFullName = 'Herzchen Reviewing'" -Name 'canonical review FullName is Herzchen Reviewing'
+Assert-Contains -Needle "[string] `$ReviewDescription = 'Antigravity-CI Review Runner'" -Name 'canonical review description is configured'
+Assert-Contains -Needle "[string] `$PublisherUserName = 'agci-publisher'" -Name 'canonical publisher technical username is agci-publisher'
+Assert-Contains -Needle "[string] `$PublisherFullName = 'Herzchen Publisher'" -Name 'canonical publisher FullName is Herzchen Publisher'
+Assert-Contains -Needle "[string] `$PublisherDescription = 'Antigravity-CI Publisher Runner'" -Name 'canonical publisher description is configured'
+Assert-Contains -Needle '[ValidateLength(1, 48)]' -Name 'operator setup enforces Windows 48-character description length constraint'
+Assert-Contains -Needle '[string] $FullName' -Name 'user initializer accepts explicit FullName parameter'
+Assert-Contains -Needle 'Set-LocalUser @updateParams' -Name 'existing account path idempotently updates metadata without recreation'
+Assert-Contains -Needle '$existing.FullName -cne $FullName' -Name 'existing account path detects FullName drift'
+Assert-Contains -Needle '$existing.Description -cne $Description' -Name 'existing account path detects Description drift'
+Assert-Contains -Needle 'ReviewIdentity = "$env:COMPUTERNAME\$ReviewUserName"' -Name 'operator setup binds review identity to technical username'
+Assert-Contains -Needle 'PublisherIdentity = "$env:COMPUTERNAME\$PublisherUserName"' -Name 'operator setup binds publisher identity to technical username'
+
+if ('Antigravity-CI Review Runner'.Length -gt 48 -or 'Antigravity-CI Publisher Runner'.Length -gt 48) {
+    throw 'Runner description exceeds Windows 48-character limit.'
+}
+Write-Host '[PASS] canonical descriptions are within Windows character limits'
+
+if ('Herzchen Reviewing' -eq 'agci-review' -or 'Herzchen Publisher' -eq 'agci-publisher') {
+    throw 'FullName must not equal UserName.'
+}
+Write-Host '[PASS] FullName and UserName remain distinct concepts'
+
 Write-Host '[PASS] local CI account initialization contract is fail-closed by role'
