@@ -37,7 +37,8 @@ $tests = @(
     'Test-RepositoryPolicy.ps1',
     'Test-PublishBoundary.ps1',
     'Test-LocalGitGuards.ps1',
-    'Test-LocalCiAccountInitializationContract.ps1'
+    'Test-LocalCiAccountInitializationContract.ps1',
+    'Test-OperatorBootstrapContract.ps1'
 )
 
 $failed = [System.Collections.Generic.List[string]]::new()
