@@ -6,7 +6,8 @@ param(
     [string] $PublisherUserName = 'agci-publisher',
     [string] $InstallBase = $(if (Test-Path 'D:\Antigravity-CI\runners') { 'D:\Antigravity-CI\runners' } else { 'C:\actions-runner' }),
     [string] $ProgramDataBase = 'C:\ProgramData\Antigravity-CI',
-    [string] $ExpectedFingerprint = 'SHA256:20kPITIYb5mzSR9B3stmLoprDRmEGCUFgN0m8BNrJSc'
+    [string] $ExpectedFingerprint = 'SHA256:20kPITIYb5mzSR9B3stmLoprDRmEGCUFgN0m8BNrJSc',
+    [string] $SigningIdentity = [Security.Principal.WindowsIdentity]::GetCurrent().Name
 )
 
 Set-StrictMode -Version Latest
@@ -14,6 +15,17 @@ $ErrorActionPreference = 'Stop'
 
 if (-not $IsWindows) {
     throw 'This script is intended for Windows host configuration.'
+}
+
+$identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+try {
+    $principal = [Security.Principal.WindowsPrincipal]::new($identity)
+    if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+        throw 'This verification script must be run elevated as Administrator.'
+    }
+}
+finally {
+    $identity.Dispose()
 }
 
 if (-not ('UserProfileHelper' -as [type])) {
@@ -84,12 +96,11 @@ if ($reviewIsAdmin -or $pubIsAdmin) {
 }
 
 # 2. Distinct SIDs
-$signingIdentity = [Security.Principal.WindowsIdentity]::GetCurrent().Name
-$signingSid = ([Security.Principal.NTAccount]::new($signingIdentity)).Translate([Security.Principal.SecurityIdentifier]).Value
+$signingSid = ([Security.Principal.NTAccount]::new($SigningIdentity)).Translate([Security.Principal.SecurityIdentifier]).Value
 $reviewSid = $review.SID.Value
 $pubSid = $pub.SID.Value
 
-Write-Host "Signing SID:   $signingSid ($signingIdentity)"
+Write-Host "Signing SID:   $signingSid ($SigningIdentity)"
 Write-Host "Review SID:    $reviewSid ($ReviewUserName)"
 Write-Host "Publisher SID: $pubSid ($PublisherUserName)"
 
@@ -101,17 +112,33 @@ Write-Host "[PASS] Signing, Review, and Publisher resolve to three distinct SIDs
 # 3. Runner directories ACLs
 function Test-RunnerDirectoryAcl {
     param([string]$Path, [string]$ExpectedUserSid)
+    if (-not (Test-Path -LiteralPath $Path -PathType Container)) {
+        throw "Required runner directory does not exist: $Path"
+    }
     $acl = Get-Acl -LiteralPath $Path
+    if (-not $acl.AreAccessRulesProtected) {
+        throw "Inheritance is not disabled on $Path"
+    }
     $allowedSids = @(
         'S-1-5-18',        # SYSTEM
         'S-1-5-32-544',    # Administrators
         $ExpectedUserSid
     )
+    $expectedFound = $false
     foreach ($rule in $acl.Access) {
         $sid = $rule.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value
         if ($allowedSids -notcontains $sid) {
             throw "Unexpected ACL grant on $Path : $($rule.IdentityReference.Value) ($sid)"
         }
+        if ($sid -eq $ExpectedUserSid) {
+            if ($rule.AccessControlType -ne 'Allow' -or ($rule.FileSystemRights -band [Security.AccessControl.FileSystemRights]::FullControl) -ne [Security.AccessControl.FileSystemRights]::FullControl) {
+                throw "Expected user ($ExpectedUserSid) does not have FullControl Allow on $Path"
+            }
+            $expectedFound = $true
+        }
+    }
+    if (-not $expectedFound) {
+        throw "Expected user ($ExpectedUserSid) has no access rule on $Path"
     }
     Write-Host "[PASS] $Path is accessible only by intended identity and SYSTEM/Administrators." -ForegroundColor Green
 }
@@ -127,8 +154,18 @@ $trustedKeyPath = Join-Path $ProgramDataBase 'trusted-keys\signing-public.pub'
 
 # Verify Sentinel ACL: Review cannot read
 $sentinelAcl = Get-Acl -LiteralPath $sentinelPath
+if (-not $sentinelAcl.AreAccessRulesProtected) {
+    throw "Inheritance is not disabled on $sentinelPath"
+}
+$allowedSentinelSids = @(
+    'S-1-5-18',        # SYSTEM
+    'S-1-5-32-544'     # Administrators
+)
 foreach ($rule in $sentinelAcl.Access) {
     $sid = $rule.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value
+    if ($allowedSentinelSids -notcontains $sid) {
+        throw "Security violation: Unexpected ACL grant on operator-sentinel.bin: $($rule.IdentityReference.Value) ($sid)"
+    }
     if ($sid -eq $reviewSid -or $sid -eq 'S-1-1-0' -or $sid -eq 'S-1-5-11' -or $sid -eq 'S-1-5-32-545') {
         throw "Security violation: Review or generic users have access to operator-sentinel.bin!"
     }
@@ -137,12 +174,19 @@ Write-Host "[PASS] Review cannot read operator-sentinel.bin (only SYSTEM and Adm
 
 # Verify Probe Manifest ACL: Review can read, cannot modify
 $manifestAcl = Get-Acl -LiteralPath $manifestPath
+if (-not $manifestAcl.AreAccessRulesProtected) {
+    throw "Inheritance is not disabled on $manifestPath"
+}
+$forbiddenRights = [Security.AccessControl.FileSystemRights]::Write -bor
+                   [Security.AccessControl.FileSystemRights]::Delete -bor
+                   [Security.AccessControl.FileSystemRights]::ChangePermissions -bor
+                   [Security.AccessControl.FileSystemRights]::TakeOwnership
 $reviewFound = $false
 foreach ($rule in $manifestAcl.Access) {
     $sid = $rule.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value
     if ($sid -eq $reviewSid) {
         $reviewFound = $true
-        if ($rule.AccessControlType -ne 'Allow' -or ($rule.FileSystemRights -band [Security.AccessControl.FileSystemRights]::Write) -ne 0) {
+        if ($rule.AccessControlType -ne 'Allow' -or ($rule.FileSystemRights -band $forbiddenRights) -ne 0) {
             throw "Security violation: Review has write/modify rights on protected-read-probes.json!"
         }
     }
@@ -154,12 +198,15 @@ Write-Host "[PASS] Review can read but cannot modify protected-read-probes.json.
 
 # Verify Trusted Public Key ACL: Review can read, cannot modify
 $keyAcl = Get-Acl -LiteralPath $trustedKeyPath
+if (-not $keyAcl.AreAccessRulesProtected) {
+    throw "Inheritance is not disabled on $trustedKeyPath"
+}
 $keyReviewFound = $false
 foreach ($rule in $keyAcl.Access) {
     $sid = $rule.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value
     if ($sid -eq $reviewSid) {
         $keyReviewFound = $true
-        if ($rule.AccessControlType -ne 'Allow' -or ($rule.FileSystemRights -band [Security.AccessControl.FileSystemRights]::Write) -ne 0) {
+        if ($rule.AccessControlType -ne 'Allow' -or ($rule.FileSystemRights -band $forbiddenRights) -ne 0) {
             throw "Security violation: Review has write/modify rights on signing-public.pub!"
         }
     }

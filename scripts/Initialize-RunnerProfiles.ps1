@@ -12,6 +12,17 @@ if (-not $IsWindows) {
     throw 'This script is intended for Windows host configuration.'
 }
 
+$identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+try {
+    $principal = [Security.Principal.WindowsPrincipal]::new($identity)
+    if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+        throw 'This initialization script must be run elevated as Administrator.'
+    }
+}
+finally {
+    $identity.Dispose()
+}
+
 if (-not ('UserProfileHelper' -as [type])) {
     Add-Type -TypeDefinition @"
 using System;
@@ -46,6 +57,11 @@ public static class UserProfileHelper {
 foreach ($acc in $Accounts) {
     $user = Get-LocalUser -Name $acc -ErrorAction Stop
     $sid = $user.SID.Value
+    $profile = Get-CimInstance Win32_UserProfile | Where-Object { $_.SID -eq $sid } | Select-Object -First 1
+    if ($null -ne $profile -and (Test-Path -LiteralPath $profile.LocalPath)) {
+        Write-Host "[OK] Profile for $acc already exists: $($profile.LocalPath)"
+        continue
+    }
     Write-Host "Creating Windows profile for $acc ($sid)..."
     $path = [UserProfileHelper]::Create($sid, $acc)
     Write-Host "[OK] Profile for $acc initialized: $path"

@@ -4,7 +4,7 @@
 param(
     [string] $ReviewUserName = 'agci-review',
     [string] $PublisherUserName = 'agci-publisher',
-    [string] $InstallBase = 'C:\actions-runner',
+    [string] $InstallBase = $(if (Test-Path 'D:\Antigravity-CI\runners') { 'D:\Antigravity-CI\runners' } else { 'C:\actions-runner' }),
     [string] $ProgramDataBase = 'C:\ProgramData\Antigravity-CI',
 
     [Parameter(Mandatory)]
