@@ -224,6 +224,7 @@ $hostUserEnvironmentControlError = $null
 $process = $null
 $processJob = [IntPtr]::Zero
 $sentinelProcess = $null
+$sentinelProcessId = 0
 $stdoutStream = $null
 $stderrStream = $null
 
@@ -342,6 +343,8 @@ try {
     if (-not $sentinelProcess.Start()) {
         throw 'Unable to start the sibling process-control sandbox sentinel.'
     }
+
+    $sentinelProcessId = [int] $sentinelProcess.Id
 
     if (-not [AntigravityCiProcessBoundary]::CanReadMemory($sentinelProcess.Id) -or
         -not [AntigravityCiProcessBoundary]::CanTerminate($sentinelProcess.Id)) {
@@ -1046,6 +1049,8 @@ Do not inspect or modify the probe script. Do not run any other command. After t
     }
 
     if ($null -eq $envelope.PSObject.Properties['structured_output'] -or
+        $null -eq $envelope.structured_output -or
+        $null -eq $envelope.structured_output.PSObject.Properties['ran_probe'] -or
         -not [bool] $envelope.structured_output.ran_probe) {
         throw 'Antigravity did not confirm that it executed the sandbox probe.'
     }
@@ -1157,6 +1162,7 @@ Do not inspect or modify the probe script. Do not run any other command. After t
         PermissionMode = [string] $initPayload.permission_mode
         AgyPath = $agyPath
         AgySha256 = $finalAgyHash
+        ProcessJobContained = $true
         OutsideReadBlocked = $true
         OutsideWriteBlocked = $true
         CredentialManagerReadBlocked = $true
