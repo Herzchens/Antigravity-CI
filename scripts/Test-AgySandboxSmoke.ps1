@@ -630,16 +630,12 @@ catch {
     $result.network_error = $_.Exception.GetType().FullName
 }
 
+$resultJson = $result | ConvertTo-Json -Depth 8
 $probeResultDir = if ($PSScriptRoot) { $PSScriptRoot } else { (Get-Location).Path }
 $probeDestination = Join-Path $probeResultDir 'probe-result.json'
-$result |
-    ConvertTo-Json -Depth 8 |
-    Set-Content -LiteralPath $probeDestination -Encoding utf8NoBOM
-if ($probeDestination -ne (Join-Path (Get-Location).Path 'probe-result.json')) {
-    $result |
-        ConvertTo-Json -Depth 8 |
-        Set-Content -LiteralPath '.\probe-result.json' -Encoding utf8NoBOM -ErrorAction SilentlyContinue
-}
+Set-Content -LiteralPath $probeDestination -Value $resultJson -Encoding utf8NoBOM
+Set-Content -LiteralPath '.\probe-result.json' -Value $resultJson -Encoding utf8NoBOM -ErrorAction SilentlyContinue
+Set-Content -LiteralPath '__PROBE_RESULT_PATH__' -Value $resultJson -Encoding utf8NoBOM -ErrorAction SilentlyContinue
 Write-Output 'sandbox-probe executed successfully'
 '@
 
@@ -654,6 +650,8 @@ Write-Output 'sandbox-probe executed successfully'
     $probe = $probe.Replace('__USER_ENVIRONMENT_NAME__', $escapedUserEnvironmentName)
     $probe = $probe.Replace('__USER_ENVIRONMENT_VALUE__', $escapedUserEnvironmentValue)
     $probe = $probe.Replace('__SENTINEL_PID__', [string] $sentinelProcessId)
+    $escapedProbeResultPath = $probeResultPath.Replace("'", "''")
+    $probe = $probe.Replace('__PROBE_RESULT_PATH__', $escapedProbeResultPath)
 
     [System.IO.File]::WriteAllText(
         $probePath,
@@ -694,16 +692,16 @@ Write-Output 'sandbox-probe executed successfully'
     }
 
     $prompt = @'
-Execute exactly this command once:
+Execute exactly this command once using the run_command tool:
 
 pwsh -NoProfile -File .\sandbox-probe.ps1
 
 Do not inspect or modify the probe script. Do not run any other command.
-After the command exits, return the exact JSON object:
+After the command exits successfully, finish and return:
 {"ran_probe":true}
 If the command cannot run, return:
 {"ran_probe":false}
-Do not add any prose or explanation. Return only the JSON object.
+Do not add any prose or explanation. Return only the JSON object matching the schema.
 '@
 
     $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
@@ -1031,6 +1029,11 @@ Do not add any prose or explanation. Return only the JSON object.
                 throw 'Antigravity sandbox smoke-test probe command completed with a tool error.'
             }
 
+            if ($null -ne $toolInfo.PSObject.Properties['output'] -and
+                [string] $toolInfo.output -match '(?i)^Command failed to run:') {
+                throw "Antigravity sandbox smoke-test probe command failed to run: $($toolInfo.output)"
+            }
+
             $matchingProbeDoneEvents++
         }
         elseif ([string] $step.state -cne 'ACTIVE') {
@@ -1133,7 +1136,7 @@ Do not add any prose or explanation. Return only the JSON object.
     if ($null -eq $envelope.PSObject.Properties['structured_output']) {
         $envelope | Add-Member -NotePropertyName 'structured_output' -NotePropertyValue ([pscustomobject]@{ ran_probe = $ranProbe }) -Force
     }
-    elseif ($null -eq $envelope.structured_output -or $envelope.structured_output -is [string] -or $null -eq $envelope.structured_output.PSObject.Properties['ran_probe']) {
+    else {
         $envelope.structured_output = [pscustomobject]@{ ran_probe = $ranProbe }
     }
 
