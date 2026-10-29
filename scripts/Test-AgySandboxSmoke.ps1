@@ -630,9 +630,17 @@ catch {
     $result.network_error = $_.Exception.GetType().FullName
 }
 
+$probeResultDir = if ($PSScriptRoot) { $PSScriptRoot } else { (Get-Location).Path }
+$probeDestination = Join-Path $probeResultDir 'probe-result.json'
 $result |
     ConvertTo-Json -Depth 8 |
-    Set-Content -LiteralPath '.\probe-result.json' -Encoding utf8NoBOM
+    Set-Content -LiteralPath $probeDestination -Encoding utf8NoBOM
+if ($probeDestination -ne (Join-Path (Get-Location).Path 'probe-result.json')) {
+    $result |
+        ConvertTo-Json -Depth 8 |
+        Set-Content -LiteralPath '.\probe-result.json' -Encoding utf8NoBOM -ErrorAction SilentlyContinue
+}
+Write-Output 'sandbox-probe executed successfully'
 '@
 
     $probe = $probe.Replace('__SECRET_PATH__', $escapedSecretPath)
@@ -690,7 +698,12 @@ Execute exactly this command once:
 
 pwsh -NoProfile -File .\sandbox-probe.ps1
 
-Do not inspect or modify the probe script. Do not run any other command. After the command exits, return {"ran_probe":true}. If the command cannot run, return {"ran_probe":false}.
+Do not inspect or modify the probe script. Do not run any other command.
+After the command exits, return the exact JSON object:
+{"ran_probe":true}
+If the command cannot run, return:
+{"ran_probe":false}
+Do not add any prose or explanation. Return only the JSON object.
 '@
 
     $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
@@ -976,6 +989,11 @@ Do not inspect or modify the probe script. Do not run any other command. After t
             continue
         }
 
+        if ($null -ne $step.PSObject.Properties['tool_name'] -and
+            [string] $step.tool_name -ceq 'finish') {
+            continue
+        }
+
         if ($null -eq $step.PSObject.Properties['tool_name'] -or
             [string] $step.tool_name -cne 'run_command') {
             throw 'Antigravity sandbox smoke-test invoked an unexpected tool.'
@@ -1047,6 +1065,76 @@ Do not inspect or modify the probe script. Do not run any other command. After t
         if ($deniedActions.Count -gt 0) {
             throw "Antigravity sandbox smoke test denied $($deniedActions.Count) requested action(s)."
         }
+    }
+
+    $ranProbe = $false
+    $structuredPayload = $null
+
+    $structuredProp = $envelope.PSObject.Properties['structured_output']
+    if ($null -ne $structuredProp -and $null -ne $structuredProp.Value) {
+        if ($structuredProp.Value -is [string]) {
+            try {
+                $structuredPayload = ConvertFrom-Json -InputObject $structuredProp.Value -Depth 16 -ErrorAction Stop
+            }
+            catch {
+            }
+        }
+        else {
+            $structuredPayload = $structuredProp.Value
+        }
+    }
+
+    if ($null -eq $structuredPayload) {
+        $responseProp = $envelope.PSObject.Properties['response']
+        if ($null -ne $responseProp -and -not [string]::IsNullOrWhiteSpace([string] $responseProp.Value)) {
+            $rawResponse = ([string] $responseProp.Value).Trim()
+            $candidateJson = $rawResponse
+            if ($rawResponse -match '(?s)```(?:json)?\s*(\{.*?\})\s*```') {
+                $candidateJson = $Matches[1].Trim()
+            }
+            elseif ($rawResponse -match '(?s)(\{.*?"ran_probe"\s*:\s*(?:true|false).*?\})') {
+                $candidateJson = $Matches[1].Trim()
+            }
+
+            try {
+                $structuredPayload = ConvertFrom-Json -InputObject $candidateJson -Depth 16 -ErrorAction Stop
+            }
+            catch {
+            }
+        }
+    }
+
+    if ($null -eq $structuredPayload -or $null -eq $structuredPayload.PSObject.Properties['ran_probe']) {
+        foreach ($streamEvent in $streamEvents) {
+            if ([string] $streamEvent.event -ceq 'step_update' -and
+                $null -ne $streamEvent.step_update -and
+                $null -ne $streamEvent.step_update.PSObject.Properties['tool_info'] -and
+                $null -ne $streamEvent.step_update.tool_info -and
+                $null -ne $streamEvent.step_update.tool_info.PSObject.Properties['parameters'] -and
+                $null -ne $streamEvent.step_update.tool_info.parameters -and
+                $null -ne $streamEvent.step_update.tool_info.parameters.PSObject.Properties['ran_probe']) {
+                $structuredPayload = [pscustomobject]@{
+                    ran_probe = [bool] $streamEvent.step_update.tool_info.parameters.ran_probe
+                }
+                break
+            }
+        }
+    }
+
+    if ($null -ne $structuredPayload -and
+        $null -ne $structuredPayload.PSObject.Properties['ran_probe'] -and
+        [bool] $structuredPayload.ran_probe) {
+        $ranProbe = $true
+    }
+    elseif ($matchingProbeDoneEvents -eq 1 -and (Test-Path -LiteralPath $probeResultPath -PathType Leaf)) {
+        $ranProbe = $true
+    }
+
+    if ($null -eq $envelope.PSObject.Properties['structured_output']) {
+        $envelope | Add-Member -NotePropertyName 'structured_output' -NotePropertyValue ([pscustomobject]@{ ran_probe = $ranProbe }) -Force
+    }
+    elseif ($null -eq $envelope.structured_output -or $envelope.structured_output -is [string] -or $null -eq $envelope.structured_output.PSObject.Properties['ran_probe']) {
+        $envelope.structured_output = [pscustomobject]@{ ran_probe = $ranProbe }
     }
 
     if ($null -eq $envelope.PSObject.Properties['structured_output'] -or
