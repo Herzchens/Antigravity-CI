@@ -46,12 +46,33 @@ function Assert-NoReparsePointInExistingPath {
     )) {
         $current = Join-Path $current $component
 
-        if (-not (Test-Path -LiteralPath $current)) {
+        $pathExists = $false
+        try {
+            $pathExists = Test-Path -LiteralPath $current -ErrorAction Stop
+        }
+        catch [System.UnauthorizedAccessException] {
+            break
+        }
+        catch [System.Security.SecurityException] {
             break
         }
 
-        $item = Get-Item -LiteralPath $current -Force -ErrorAction Stop
-        if (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+        if (-not $pathExists) {
+            break
+        }
+
+        $item = $null
+        try {
+            $item = Get-Item -LiteralPath $current -Force -ErrorAction Stop
+        }
+        catch [System.UnauthorizedAccessException] {
+            break
+        }
+        catch [System.Security.SecurityException] {
+            break
+        }
+
+        if ($null -ne $item -and ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
             throw "$Name traverses a symbolic link or reparse point."
         }
     }
@@ -135,7 +156,7 @@ function Assert-DirectoryCreateDenied {
             $stream.Dispose()
         }
 
-        if (Test-Path -LiteralPath $candidate) {
+        if (Test-Path -LiteralPath $candidate -ErrorAction SilentlyContinue) {
             Remove-Item -LiteralPath $candidate -Force -ErrorAction SilentlyContinue
         }
     }
