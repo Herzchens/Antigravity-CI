@@ -3,7 +3,13 @@
 [CmdletBinding()]
 param(
     [string] $ReviewUserName = 'agci-review',
+    [string] $ReviewFullName = 'Herzchen Reviewing',
+    [string] $ReviewDescription = 'Antigravity-CI Review Runner',
+
     [string] $PublisherUserName = 'agci-publisher',
+    [string] $PublisherFullName = 'Herzchen Publisher',
+    [string] $PublisherDescription = 'Antigravity-CI Publisher Runner',
+
     [string] $InstallBase = $(if (Test-Path 'D:\Antigravity-CI\runners') { 'D:\Antigravity-CI\runners' } else { 'C:\actions-runner' }),
     [string] $ProgramDataBase = 'C:\ProgramData\Antigravity-CI',
     [string] $ExpectedFingerprint = 'SHA256:20kPITIYb5mzSR9B3stmLoprDRmEGCUFgN0m8BNrJSc',
@@ -88,12 +94,26 @@ $pub = Get-LocalUser -Name $PublisherUserName -ErrorAction Stop
 $reviewIsAdmin = $adminsGroup -contains $review.SID.Value
 $pubIsAdmin = $adminsGroup -contains $pub.SID.Value
 
-Write-Host "Review user exists: True, Enabled: $($review.Enabled), IsAdmin: $reviewIsAdmin"
-Write-Host "Publisher user exists: True, Enabled: $($pub.Enabled), IsAdmin: $pubIsAdmin"
+Write-Host "Review user exists: True, Enabled: $($review.Enabled), IsAdmin: $reviewIsAdmin, FullName: '$($review.FullName)'"
+Write-Host "Publisher user exists: True, Enabled: $($pub.Enabled), IsAdmin: $pubIsAdmin, FullName: '$($pub.FullName)'"
 
 if ($reviewIsAdmin -or $pubIsAdmin) {
     throw "Security violation: runner account has Administrator rights!"
 }
+
+if (-not [string]::IsNullOrWhiteSpace($ReviewFullName) -and $review.FullName -cne $ReviewFullName) {
+    throw "Review user FullName mismatch: got '$($review.FullName)', expected '$ReviewFullName'."
+}
+if (-not [string]::IsNullOrWhiteSpace($PublisherFullName) -and $pub.FullName -cne $PublisherFullName) {
+    throw "Publisher user FullName mismatch: got '$($pub.FullName)', expected '$PublisherFullName'."
+}
+if (-not [string]::IsNullOrWhiteSpace($ReviewDescription) -and $review.Description -cne $ReviewDescription) {
+    throw "Review user Description mismatch: got '$($review.Description)', expected '$ReviewDescription'."
+}
+if (-not [string]::IsNullOrWhiteSpace($PublisherDescription) -and $pub.Description -cne $PublisherDescription) {
+    throw "Publisher user Description mismatch: got '$($pub.Description)', expected '$PublisherDescription'."
+}
+Write-Host "[PASS] Runner accounts exist, enabled, non-admin, with canonical display names and descriptions." -ForegroundColor Green
 
 # 2. Distinct SIDs
 $signingSid = ([Security.Principal.NTAccount]::new($SigningIdentity)).Translate([Security.Principal.SecurityIdentifier]).Value

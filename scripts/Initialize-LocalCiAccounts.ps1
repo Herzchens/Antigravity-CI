@@ -3,7 +3,13 @@
 [CmdletBinding()]
 param(
     [string] $ReviewUserName = 'agci-review',
+    [string] $ReviewFullName = 'Herzchen Reviewing',
+    [string] $ReviewDescription = 'Antigravity-CI Review Runner',
+
     [string] $PublisherUserName = 'agci-publisher',
+    [string] $PublisherFullName = 'Herzchen Publisher',
+    [string] $PublisherDescription = 'Antigravity-CI Publisher Runner',
+
     [string] $InstallBase = $(if (Test-Path 'D:\Antigravity-CI\runners') { 'D:\Antigravity-CI\runners' } else { 'C:\actions-runner' }),
     [string] $ProgramDataBase = 'C:\ProgramData\Antigravity-CI',
 
@@ -71,6 +77,10 @@ function New-SecureLocalUser {
         [string] $UserName,
 
         [Parameter(Mandatory)]
+        [string] $FullName,
+
+        [Parameter(Mandatory)]
+        [ValidateLength(1, 48)]
         [string] $Description
     )
 
@@ -80,12 +90,35 @@ function New-SecureLocalUser {
             throw "Existing local user '$UserName' is disabled."
         }
 
-        Write-Host "[OK] Local user '$UserName' already exists."
+        $needsUpdate = $false
+        $updateParams = @{
+            Name = $UserName
+        }
+
+        if ($existing.FullName -cne $FullName) {
+            $updateParams['FullName'] = $FullName
+            $needsUpdate = $true
+        }
+
+        if ($existing.Description -cne $Description) {
+            $updateParams['Description'] = $Description
+            $needsUpdate = $true
+        }
+
+        if ($needsUpdate) {
+            Set-LocalUser @updateParams -ErrorAction Stop
+            Write-Host "[UPDATED] Local user '$UserName' display name/description updated."
+            $existing = Get-LocalUser -Name $UserName -ErrorAction Stop
+        }
+        else {
+            Write-Host "[OK] Local user '$UserName' already exists with canonical metadata."
+        }
+
         return $existing
     }
 
     $password = Read-Host -Prompt "Enter password for standard user '$UserName'" -AsSecureString
-    $user = New-LocalUser -Name $UserName -Password $password -FullName $UserName -Description $Description -PasswordNeverExpires:$true
+    $user = New-LocalUser -Name $UserName -Password $password -FullName $FullName -Description $Description -PasswordNeverExpires:$true
 
     Write-Host "[CREATED] Local standard user '$UserName' successfully created."
     $user
@@ -238,8 +271,8 @@ if (-not $fingerprintMatch.Success) {
 $signingFingerprint = $fingerprintMatch.Value
 
 Write-Host '=== Phase A: Create Low-Privilege Local Accounts ==='
-$reviewUser = New-SecureLocalUser -UserName $ReviewUserName -Description 'Antigravity-CI Dedicated Standard Review Runner'
-$publisherUser = New-SecureLocalUser -UserName $PublisherUserName -Description 'Antigravity-CI Dedicated Publisher Runner'
+$reviewUser = New-SecureLocalUser -UserName $ReviewUserName -FullName $ReviewFullName -Description $ReviewDescription
+$publisherUser = New-SecureLocalUser -UserName $PublisherUserName -FullName $PublisherFullName -Description $PublisherDescription
 
 $administratorsSid = [Security.Principal.SecurityIdentifier]::new(
     [Security.Principal.WellKnownSidType]::BuiltinAdministratorsSid,

@@ -65,6 +65,15 @@ Assert-ScriptContains -Content $verifyScript -Needle 'Review can read but cannot
 Assert-ScriptContains -Content $verifyScript -Needle 'Review can read but cannot modify signing-public.pub' -Name 'bootstrap verification enforces public-key read-only policy for review'
 Assert-ScriptContains -Content $verifyScript -Needle 'ssh-keygen -lf $trustedKeyPath' -Name 'bootstrap verification validates copied public key fingerprint'
 
+Assert-ScriptContains -Content $verifyScript -Needle '[string] $ReviewFullName = ''Herzchen Reviewing''' -Name 'bootstrap verification parameterizes ReviewFullName'
+Assert-ScriptContains -Content $verifyScript -Needle '[string] $PublisherFullName = ''Herzchen Publisher''' -Name 'bootstrap verification parameterizes PublisherFullName'
+Assert-ScriptContains -Content $verifyScript -Needle '[string] $ReviewDescription = ''Antigravity-CI Review Runner''' -Name 'bootstrap verification parameterizes ReviewDescription'
+Assert-ScriptContains -Content $verifyScript -Needle '[string] $PublisherDescription = ''Antigravity-CI Publisher Runner''' -Name 'bootstrap verification parameterizes PublisherDescription'
+Assert-ScriptContains -Content $verifyScript -Needle 'Review user FullName mismatch' -Name 'bootstrap verification enforces review FullName match'
+Assert-ScriptContains -Content $verifyScript -Needle 'Publisher user FullName mismatch' -Name 'bootstrap verification enforces publisher FullName match'
+Assert-ScriptContains -Content $verifyScript -Needle 'Review user Description mismatch' -Name 'bootstrap verification enforces review Description match'
+Assert-ScriptContains -Content $verifyScript -Needle 'Publisher user Description mismatch' -Name 'bootstrap verification enforces publisher Description match'
+
 # Offline Execution Contract: verify non-elevated execution fails closed
 if ($IsWindows) {
     $isCurrentElevated = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
