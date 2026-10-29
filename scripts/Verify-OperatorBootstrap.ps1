@@ -4,7 +4,7 @@
 param(
     [string] $ReviewUserName = 'agci-review',
     [string] $PublisherUserName = 'agci-publisher',
-    [string] $InstallBase = 'C:\actions-runner',
+    [string] $InstallBase = $(if (Test-Path 'D:\Antigravity-CI\runners') { 'D:\Antigravity-CI\runners' } else { 'C:\actions-runner' }),
     [string] $ProgramDataBase = 'C:\ProgramData\Antigravity-CI',
     [string] $ExpectedFingerprint = 'SHA256:20kPITIYb5mzSR9B3stmLoprDRmEGCUFgN0m8BNrJSc'
 )
@@ -47,13 +47,19 @@ public static class UserProfileHelper {
 }
 
 Write-Host "====================================================" -ForegroundColor Cyan
-Write-Host " STEP 9: Initialize Windows Profiles for Runners    " -ForegroundColor Cyan
+Write-Host " STEP 9: Verify Windows Profiles for Runners        " -ForegroundColor Cyan
 Write-Host "====================================================" -ForegroundColor Cyan
 
 foreach ($acc in @($ReviewUserName, $PublisherUserName)) {
     $u = Get-LocalUser -Name $acc -ErrorAction Stop
-    $profilePath = [UserProfileHelper]::Create($u.SID.Value, $acc)
-    Write-Host "[OK] $acc profile: $profilePath" -ForegroundColor Green
+    $profile = Get-CimInstance Win32_UserProfile | Where-Object { $_.SID -eq $u.SID.Value } | Select-Object -First 1
+    if ($null -ne $profile -and (Test-Path -LiteralPath $profile.LocalPath)) {
+        Write-Host "[OK] $acc profile: $($profile.LocalPath)" -ForegroundColor Green
+    }
+    else {
+        $profilePath = [UserProfileHelper]::Create($u.SID.Value, $acc)
+        Write-Host "[OK] $acc profile: $profilePath" -ForegroundColor Green
+    }
 }
 
 Write-Host ""
