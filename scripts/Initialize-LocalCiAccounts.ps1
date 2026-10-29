@@ -239,7 +239,7 @@ $signingFingerprint = $fingerprintMatch.Value
 
 Write-Host '=== Phase A: Create Low-Privilege Local Accounts ==='
 $reviewUser = New-SecureLocalUser -UserName $ReviewUserName -Description 'Antigravity-CI Dedicated Standard Review Runner'
-$publisherUser = New-SecureLocalUser -UserName $PublisherUserName -Description 'Antigravity-CI Dedicated Standard Publisher Runner'
+$publisherUser = New-SecureLocalUser -UserName $PublisherUserName -Description 'Antigravity-CI Dedicated Publisher Runner'
 
 $administratorsSid = [Security.Principal.SecurityIdentifier]::new(
     [Security.Principal.WellKnownSidType]::BuiltinAdministratorsSid,
