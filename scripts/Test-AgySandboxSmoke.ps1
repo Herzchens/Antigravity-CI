@@ -1031,8 +1031,9 @@ Do not inspect or modify the probe script. Do not run any other command. After t
     }
 
     $envelope = $resultEvent.result
-    if ([string] $envelope.status -cne 'SUCCESS') {
-        throw "Antigravity sandbox smoke test returned status '$($envelope.status)'."
+    $statusValue = if ($null -ne $envelope.PSObject.Properties['status']) { [string] $envelope.status } else { '<missing>' }
+    if ($statusValue -cne 'SUCCESS') {
+        throw "Antigravity sandbox smoke test returned status '$statusValue'."
     }
 
     $deniedProperty = $envelope.PSObject.Properties['denied_actions']
@@ -1061,6 +1062,35 @@ Do not inspect or modify the probe script. Do not run any other command. After t
 
     $probeResult = Get-Content -LiteralPath $probeResultPath -Raw -Encoding utf8 |
         ConvertFrom-Json -Depth 16 -ErrorAction Stop
+
+    if ($null -eq $probeResult) {
+        throw 'Sandbox probe result file was empty.'
+    }
+
+    $requiredProbeProperties = @(
+        'started',
+        'outside_read_succeeded',
+        'outside_write_succeeded',
+        'credential_probe_completed',
+        'credential_read_succeeded',
+        'credential_write_probe_completed',
+        'credential_write_succeeded',
+        'scheduled_task_probe_completed',
+        'scheduled_task_create_succeeded',
+        'registry_probe_completed',
+        'registry_write_succeeded',
+        'user_environment_probe_completed',
+        'user_environment_write_succeeded',
+        'process_handle_probe_completed',
+        'process_vm_read_handle_succeeded',
+        'process_terminate_handle_succeeded',
+        'network_succeeded'
+    )
+    foreach ($requiredProp in $requiredProbeProperties) {
+        if ($null -eq $probeResult.PSObject.Properties[$requiredProp]) {
+            throw "Sandbox probe result is missing required property '$requiredProp'."
+        }
+    }
 
     if (-not [bool] $probeResult.started) {
         throw 'Sandbox probe did not start.'
@@ -1209,6 +1239,14 @@ finally {
     }
 
     if ($null -ne $process) {
+        try {
+            if (-not $process.HasExited) {
+                $process.Kill($true)
+            }
+        }
+        catch {
+        }
+
         $process.Dispose()
     }
 
@@ -1216,7 +1254,7 @@ finally {
         try {
             if (-not $sentinelProcess.HasExited) {
                 $sentinelProcess.Kill($true)
-                $sentinelProcess.WaitForExit()
+                $null = $sentinelProcess.WaitForExit(5000)
             }
         }
         catch {
