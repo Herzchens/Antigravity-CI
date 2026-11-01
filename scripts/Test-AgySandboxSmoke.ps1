@@ -432,26 +432,27 @@ $result = [ordered]@{
 }
 
 try {
-    $value = Get-Content -LiteralPath '__SECRET_PATH__' -Raw -ErrorAction Stop
-    $result.outside_read_succeeded = $true
-    $bytes = [System.Text.Encoding]::UTF8.GetBytes([string] $value)
-    $hash = [System.Security.Cryptography.SHA256]::HashData($bytes)
-    $result.outside_read_hash = [Convert]::ToHexString($hash).ToLowerInvariant()
-}
-catch {
-    $result.outside_read_error = $_.Exception.GetType().FullName
-}
+    try {
+        $value = Get-Content -LiteralPath '__SECRET_PATH__' -Raw -ErrorAction Stop
+        $result.outside_read_succeeded = $true
+        $bytes = [System.Text.Encoding]::UTF8.GetBytes([string] $value)
+        $hash = [System.Security.Cryptography.SHA256]::HashData($bytes)
+        $result.outside_read_hash = [Convert]::ToHexString($hash).ToLowerInvariant()
+    }
+    catch {
+        $result.outside_read_error = $_.Exception.GetType().FullName
+    }
 
-try {
-    Set-Content -LiteralPath '__WRITE_PATH__' -Value 'sandbox-write-should-fail' -Encoding utf8NoBOM -ErrorAction Stop
-    $result.outside_write_succeeded = $true
-}
-catch {
-    $result.outside_write_error = $_.Exception.GetType().FullName
-}
+    try {
+        Set-Content -LiteralPath '__WRITE_PATH__' -Value 'sandbox-write-should-fail' -Encoding utf8NoBOM -ErrorAction Stop
+        $result.outside_write_succeeded = $true
+    }
+    catch {
+        $result.outside_write_error = $_.Exception.GetType().FullName
+    }
 
-try {
-    Add-Type -TypeDefinition @"
+    try {
+        Add-Type -TypeDefinition @"
 using System;
 using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.ComTypes;
@@ -532,91 +533,91 @@ public static class AntigravityCiCredentialProbe
 }
 "@ -Language CSharp -ErrorAction Stop
 
-    $result.credential_read_succeeded = [AntigravityCiCredentialProbe]::CanRead('__CREDENTIAL_TARGET__')
-    $result.credential_probe_completed = $true
-}
-catch {
-    $result.credential_probe_error = $_.Exception.GetType().FullName
-}
-
-try {
-    $result.credential_write_succeeded = [AntigravityCiCredentialProbe]::Write(
-        '__CREDENTIAL_WRITE_TARGET__',
-        'antigravity-ci-sandbox-write',
-        '__CREDENTIAL_WRITE_VALUE__'
-    )
-}
-catch {
-    $result.credential_write_probe_error = $_.Exception.GetType().FullName
-}
-finally {
-    $result.credential_write_probe_completed = $true
-}
-
-try {
-    $taskAction = '"' + (Join-Path $env:SystemRoot 'System32\cmd.exe') + '" /c exit 0'
-    & schtasks.exe /Create /TN '__TASK_NAME__' /TR $taskAction /SC ONLOGON /RL LIMITED /F 2>&1 | Out-Null
-    $result.scheduled_task_exit_code = [int] $LASTEXITCODE
-    $result.scheduled_task_create_succeeded = $LASTEXITCODE -eq 0
-    $result.scheduled_task_probe_completed = $true
-}
-catch {
-    $result.scheduled_task_probe_error = $_.Exception.GetType().FullName
-}
-
-try {
-    $runKey = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey(
-        'Software\Microsoft\Windows\CurrentVersion\Run',
-        $true
-    )
-
-    if ($null -eq $runKey) {
-        throw 'HKCU Run key is unavailable.'
+        $result.credential_read_succeeded = [AntigravityCiCredentialProbe]::CanRead('__CREDENTIAL_TARGET__')
+        $result.credential_probe_completed = $true
+    }
+    catch {
+        $result.credential_probe_error = $_.Exception.GetType().FullName
     }
 
     try {
-        $runKey.SetValue(
-            '__RUN_VALUE_NAME__',
-            '__RUN_VALUE_DATA__',
-            [Microsoft.Win32.RegistryValueKind]::String
+        $result.credential_write_succeeded = [AntigravityCiCredentialProbe]::Write(
+            '__CREDENTIAL_WRITE_TARGET__',
+            'antigravity-ci-sandbox-write',
+            '__CREDENTIAL_WRITE_VALUE__'
         )
-        $result.registry_write_succeeded = $true
+    }
+    catch {
+        $result.credential_write_probe_error = $_.Exception.GetType().FullName
     }
     finally {
-        $runKey.Dispose()
+        $result.credential_write_probe_completed = $true
     }
-}
-catch {
-    $result.registry_probe_error = $_.Exception.GetType().FullName
-}
-finally {
-    $result.registry_probe_completed = $true
-}
 
-try {
-    [Environment]::SetEnvironmentVariable(
-        '__USER_ENVIRONMENT_NAME__',
-        '__USER_ENVIRONMENT_VALUE__',
-        [EnvironmentVariableTarget]::User
-    )
+    try {
+        $taskAction = '"' + (Join-Path $env:SystemRoot 'System32\cmd.exe') + '" /c exit 0'
+        & schtasks.exe /Create /TN '__TASK_NAME__' /TR $taskAction /SC ONLOGON /RL LIMITED /F 2>&1 | Out-Null
+        $result.scheduled_task_exit_code = [int] $LASTEXITCODE
+        $result.scheduled_task_create_succeeded = $LASTEXITCODE -eq 0
+        $result.scheduled_task_probe_completed = $true
+    }
+    catch {
+        $result.scheduled_task_probe_error = $_.Exception.GetType().FullName
+    }
 
-    $environmentValue = [Environment]::GetEnvironmentVariable(
-        '__USER_ENVIRONMENT_NAME__',
-        [EnvironmentVariableTarget]::User
-    )
+    try {
+        $runKey = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey(
+            'Software\Microsoft\Windows\CurrentVersion\Run',
+            $true
+        )
 
-    $result.user_environment_write_succeeded =
-        ([string] $environmentValue -ceq '__USER_ENVIRONMENT_VALUE__')
-}
-catch {
-    $result.user_environment_probe_error = $_.Exception.GetType().FullName
-}
-finally {
-    $result.user_environment_probe_completed = $true
-}
+        if ($null -eq $runKey) {
+            throw 'HKCU Run key is unavailable.'
+        }
 
-try {
-    Add-Type -TypeDefinition @"
+        try {
+            $runKey.SetValue(
+                '__RUN_VALUE_NAME__',
+                '__RUN_VALUE_DATA__',
+                [Microsoft.Win32.RegistryValueKind]::String
+            )
+            $result.registry_write_succeeded = $true
+        }
+        finally {
+            $runKey.Dispose()
+        }
+    }
+    catch {
+        $result.registry_probe_error = $_.Exception.GetType().FullName
+    }
+    finally {
+        $result.registry_probe_completed = $true
+    }
+
+    try {
+        [Environment]::SetEnvironmentVariable(
+            '__USER_ENVIRONMENT_NAME__',
+            '__USER_ENVIRONMENT_VALUE__',
+            [EnvironmentVariableTarget]::User
+        )
+
+        $environmentValue = [Environment]::GetEnvironmentVariable(
+            '__USER_ENVIRONMENT_NAME__',
+            [EnvironmentVariableTarget]::User
+        )
+
+        $result.user_environment_write_succeeded =
+            ([string] $environmentValue -ceq '__USER_ENVIRONMENT_VALUE__')
+    }
+    catch {
+        $result.user_environment_probe_error = $_.Exception.GetType().FullName
+    }
+    finally {
+        $result.user_environment_probe_completed = $true
+    }
+
+    try {
+        Add-Type -TypeDefinition @"
 using System;
 using System.Runtime.InteropServices;
 
@@ -656,29 +657,31 @@ public static class AntigravityCiProcessProbe
 }
 "@ -Language CSharp -ErrorAction Stop
 
-    $result.process_vm_read_handle_succeeded = [AntigravityCiProcessProbe]::CanReadMemory(__SENTINEL_PID__)
-    $result.process_terminate_handle_succeeded = [AntigravityCiProcessProbe]::CanTerminate(__SENTINEL_PID__)
-    $result.process_handle_probe_completed = $true
-}
-catch {
-    $result.process_handle_probe_error = $_.Exception.GetType().FullName
-}
+        $result.process_vm_read_handle_succeeded = [AntigravityCiProcessProbe]::CanReadMemory(__SENTINEL_PID__)
+        $result.process_terminate_handle_succeeded = [AntigravityCiProcessProbe]::CanTerminate(__SENTINEL_PID__)
+        $result.process_handle_probe_completed = $true
+    }
+    catch {
+        $result.process_handle_probe_error = $_.Exception.GetType().FullName
+    }
 
-try {
-    $response = Invoke-WebRequest -Uri 'https://example.com/' -UseBasicParsing -TimeoutSec 15 -ErrorAction Stop
-    $result.network_succeeded = $true
-    $result.network_status = [int] $response.StatusCode
+    try {
+        $response = Invoke-WebRequest -Uri 'https://example.com/' -UseBasicParsing -TimeoutSec 15 -ErrorAction Stop
+        $result.network_succeeded = $true
+        $result.network_status = [int] $response.StatusCode
+    }
+    catch {
+        $result.network_error = $_.Exception.GetType().FullName
+    }
 }
-catch {
-    $result.network_error = $_.Exception.GetType().FullName
+finally {
+    $resultJson = $result | ConvertTo-Json -Depth 8
+    $probeResultDir = if ($PSScriptRoot) { $PSScriptRoot } else { (Get-Location).Path }
+    $probeDestination = Join-Path $probeResultDir 'probe-result.json'
+    Set-Content -LiteralPath $probeDestination -Value $resultJson -Encoding utf8NoBOM -ErrorAction SilentlyContinue
+    Set-Content -LiteralPath '.\probe-result.json' -Value $resultJson -Encoding utf8NoBOM -ErrorAction SilentlyContinue
+    Set-Content -LiteralPath '__PROBE_RESULT_PATH__' -Value $resultJson -Encoding utf8NoBOM -ErrorAction SilentlyContinue
 }
-
-$resultJson = $result | ConvertTo-Json -Depth 8
-$probeResultDir = if ($PSScriptRoot) { $PSScriptRoot } else { (Get-Location).Path }
-$probeDestination = Join-Path $probeResultDir 'probe-result.json'
-Set-Content -LiteralPath $probeDestination -Value $resultJson -Encoding utf8NoBOM
-Set-Content -LiteralPath '.\probe-result.json' -Value $resultJson -Encoding utf8NoBOM -ErrorAction SilentlyContinue
-Set-Content -LiteralPath '__PROBE_RESULT_PATH__' -Value $resultJson -Encoding utf8NoBOM -ErrorAction SilentlyContinue
 Write-Output 'sandbox-probe executed successfully'
 '@
 
@@ -1077,6 +1080,16 @@ Do not add any prose or explanation. Return only the JSON object matching the sc
                 throw "Antigravity sandbox smoke-test probe command failed to run: $($toolInfo.output)"
             }
 
+            if ($null -ne $toolInfo.PSObject.Properties['output'] -and
+                [string] $toolInfo.output -match '(?i)Command exited with code (-?\d+)' -and
+                [int] $Matches[1] -ne 0) {
+                $code = [int] $Matches[1]
+                if ($code -eq -1073741502) {
+                    throw "Antigravity sandbox smoke-test probe command exited with code -1073741502 (STATUS_DLL_INIT_FAILED 0xC0000142). Host DLL injection (such as Windhawk or third-party hooks) is colliding with the Windows AppContainer Process Security Environment. Exclude cmd.exe, pwsh.exe, and agy.exe in Windhawk or disable Windhawk during review attestation."
+                }
+                throw "Antigravity sandbox smoke-test probe command exited with non-zero code $code`: $($toolInfo.output)"
+            }
+
             $matchingProbeDoneEvents++
         }
         elseif ([string] $step.state -cne 'ACTIVE') {
@@ -1187,7 +1200,11 @@ Do not add any prose or explanation. Return only the JSON object matching the sc
         $null -eq $envelope.structured_output -or
         $null -eq $envelope.structured_output.PSObject.Properties['ran_probe'] -or
         -not [bool] $envelope.structured_output.ran_probe) {
-        throw 'Antigravity did not confirm that it executed the sandbox probe.'
+        $diagDetail = ''
+        if ($null -ne $toolInfo -and $null -ne $toolInfo.PSObject.Properties['output']) {
+            $diagDetail = " Last command output: $($toolInfo.output)"
+        }
+        throw "Antigravity did not confirm that it executed the sandbox probe.$diagDetail"
     }
 
     if (-not (Test-Path -LiteralPath $probeResultPath -PathType Leaf)) {
