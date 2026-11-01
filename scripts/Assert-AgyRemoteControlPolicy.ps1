@@ -313,6 +313,7 @@ catch {
 }
 
 $processMarkerCount = 0
+$offendingMarkers = [System.Collections.Generic.List[string]]::new()
 foreach ($process in $processes) {
     if ([int] $process.ProcessId -eq $PID) {
         continue
@@ -331,11 +332,13 @@ foreach ($process in $processes) {
         (Test-RemoteControlMarkerText -Value $name) -or
         (Test-RemoteControlMarkerText -Value $commandLine)) {
         $processMarkerCount++
+        $offendingMarkers.Add("PID $($process.ProcessId): $name")
     }
 }
 
 if ($processMarkerCount -gt 0) {
-    throw "Review runner exposes $processMarkerCount concurrent Antigravity/Remote Control process marker(s). Dedicated review execution requires no other Antigravity process."
+    $detail = if ($offendingMarkers.Count -gt 0) { " ($($offendingMarkers -join ', '))" } else { '' }
+    throw "Review runner exposes $processMarkerCount concurrent Antigravity/Remote Control process marker(s)$detail. Dedicated review execution requires no other Antigravity process."
 }
 
 [pscustomobject][ordered]@{
