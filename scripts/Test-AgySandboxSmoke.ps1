@@ -1196,19 +1196,20 @@ Do not add any prose or explanation. Return only the JSON object matching the sc
         $envelope.structured_output = [pscustomobject]@{ ran_probe = $ranProbe }
     }
 
+    $diagDetail = ''
+    if ($null -ne $toolInfo -and $null -ne $toolInfo.PSObject.Properties['output']) {
+        $diagDetail = " Last command output: $($toolInfo.output)"
+    }
+
     if ($null -eq $envelope.PSObject.Properties['structured_output'] -or
         $null -eq $envelope.structured_output -or
         $null -eq $envelope.structured_output.PSObject.Properties['ran_probe'] -or
         -not [bool] $envelope.structured_output.ran_probe) {
-        $diagDetail = ''
-        if ($null -ne $toolInfo -and $null -ne $toolInfo.PSObject.Properties['output']) {
-            $diagDetail = " Last command output: $($toolInfo.output)"
-        }
         throw "Antigravity did not confirm that it executed the sandbox probe.$diagDetail"
     }
 
     if (-not (Test-Path -LiteralPath $probeResultPath -PathType Leaf)) {
-        throw 'Sandbox probe result file was not created. Configure headless tool permissions to proceed in sandbox, then retry.'
+        throw "Sandbox probe result file was not created. Configure headless tool permissions to proceed in sandbox, then retry.$diagDetail"
     }
 
     $probeResult = Get-Content -LiteralPath $probeResultPath -Raw -Encoding utf8 |
