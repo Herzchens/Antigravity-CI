@@ -272,6 +272,7 @@ $stderrStream = $null
 
 try {
     New-Item -ItemType Directory -Path $workspace -Force | Out-Null
+    & icacls.exe $tempRoot /grant "*S-1-15-2-1:(OI)(CI)(M)" /T /Q 2>&1 | Out-Null
     Initialize-AgySandboxSkeleton -HomeDirectory $HOME
     New-Item -ItemType Directory -Path $sshDirectory -Force | Out-Null
 
@@ -678,9 +679,28 @@ finally {
     $resultJson = $result | ConvertTo-Json -Depth 8
     $probeResultDir = if ($PSScriptRoot) { $PSScriptRoot } else { (Get-Location).Path }
     $probeDestination = Join-Path $probeResultDir 'probe-result.json'
-    Set-Content -LiteralPath $probeDestination -Value $resultJson -Encoding utf8NoBOM -ErrorAction SilentlyContinue
-    Set-Content -LiteralPath '.\probe-result.json' -Value $resultJson -Encoding utf8NoBOM -ErrorAction SilentlyContinue
-    Set-Content -LiteralPath '__PROBE_RESULT_PATH__' -Value $resultJson -Encoding utf8NoBOM -ErrorAction SilentlyContinue
+    $writeErrors = @()
+    try {
+        Set-Content -LiteralPath $probeDestination -Value $resultJson -Encoding utf8NoBOM -ErrorAction Stop
+    }
+    catch {
+        $writeErrors += "[$probeDestination]: $($_.Exception.Message)"
+    }
+    try {
+        Set-Content -LiteralPath '.\probe-result.json' -Value $resultJson -Encoding utf8NoBOM -ErrorAction Stop
+    }
+    catch {
+        $writeErrors += "[.\probe-result.json]: $($_.Exception.Message)"
+    }
+    try {
+        Set-Content -LiteralPath '__PROBE_RESULT_PATH__' -Value $resultJson -Encoding utf8NoBOM -ErrorAction Stop
+    }
+    catch {
+        $writeErrors += "[__PROBE_RESULT_PATH__]: $($_.Exception.Message)"
+    }
+    if ($writeErrors.Count -gt 0) {
+        Write-Output ("probe-write-errors: " + ($writeErrors -join '; '))
+    }
 }
 Write-Output 'sandbox-probe executed successfully'
 '@
