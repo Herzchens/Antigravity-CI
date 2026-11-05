@@ -126,8 +126,8 @@ try {
         '-C', $repositoryRoot,
         'fetch', '--no-tags', '--no-recurse-submodules',
         'origin',
-        "+refs/heads/$BaseRef:refs/remotes/origin/$BaseRef",
-        "+refs/heads/$HeadRef:refs/remotes/origin/$HeadRef"
+        "+refs/heads/${BaseRef}:refs/remotes/origin/${BaseRef}",
+        "+refs/heads/${HeadRef}:refs/remotes/origin/${HeadRef}"
     ) -Environment $gitEnvironment | Out-Null
 
     $fetchUrl = (Invoke-Git -Arguments @('-C', $repositoryRoot, 'remote', 'get-url', 'origin')).Trim()
