@@ -1,0 +1,292 @@
+#requires -Version 7.4
+
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
+
+$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
+$workflowPath = Join-Path $repoRoot '.github\workflows\review.yml'
+$callerPath = Join-Path $repoRoot 'templates\caller-workflow.yml'
+
+$workflow = Get-Content -LiteralPath $workflowPath -Raw -Encoding utf8
+$caller = Get-Content -LiteralPath $callerPath -Raw -Encoding utf8
+$prepareSigningPath = Join-Path $repoRoot 'scripts\Prepare-SigningRepository.ps1'
+$prepareSigningScript = Get-Content -LiteralPath $prepareSigningPath -Raw -Encoding utf8
+
+function Assert-Contains {
+    param(
+        [Parameter(Mandatory)][string] $Text,
+        [Parameter(Mandatory)][string] $Needle,
+        [Parameter(Mandatory)][string] $Name
+    )
+
+    if (-not $Text.Contains($Needle, [StringComparison]::Ordinal)) {
+        throw "Workflow contract missing: $Name"
+    }
+
+    Write-Host "[PASS] $Name"
+}
+
+function Assert-NotContains {
+    param(
+        [Parameter(Mandatory)][string] $Text,
+        [Parameter(Mandatory)][string] $Needle,
+        [Parameter(Mandatory)][string] $Name
+    )
+
+    if ($Text.Contains($Needle, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "Workflow contract contains forbidden text: $Name"
+    }
+
+    Write-Host "[PASS] $Name"
+}
+
+function Assert-Matches {
+    param(
+        [Parameter(Mandatory)][string] $Text,
+        [Parameter(Mandatory)][string] $Pattern,
+        [Parameter(Mandatory)][string] $Name
+    )
+
+    if ($Text -notmatch $Pattern) {
+        throw "Workflow contract pattern missing: $Name"
+    }
+
+    Write-Host "[PASS] $Name"
+}
+
+function Assert-NotMatches {
+    param(
+        [Parameter(Mandatory)][string] $Text,
+        [Parameter(Mandatory)][string] $Pattern,
+        [Parameter(Mandatory)][string] $Name
+    )
+
+    if ($Text -match $Pattern) {
+        throw "Workflow contract contains forbidden pattern: $Name"
+    }
+
+    Write-Host "[PASS] $Name"
+}
+
+function Get-JobText {
+    param(
+        [Parameter(Mandatory)][string] $Start,
+        [string] $End
+    )
+
+    $startPosition = $workflow.IndexOf($Start, [StringComparison]::Ordinal)
+    if ($startPosition -lt 0) {
+        throw "Workflow job marker is missing: $Start"
+    }
+
+    $endPosition = if ([string]::IsNullOrWhiteSpace($End)) {
+        $workflow.Length
+    }
+    else {
+        $candidate = $workflow.IndexOf($End, $startPosition + $Start.Length, [StringComparison]::Ordinal)
+        if ($candidate -lt 0) {
+            throw "Workflow job marker is missing: $End"
+        }
+        $candidate
+    }
+
+    $workflow.Substring($startPosition, $endPosition - $startPosition)
+}
+
+Assert-Contains -Text $workflow -Needle '  workflow_call:' -Name 'infrastructure workflow is reusable-only'
+Assert-NotMatches -Text $workflow -Pattern '(?m)^  pull_request_target:\s*$' -Name 'infrastructure workflow does not directly trigger privileged PR events'
+Assert-NotContains -Text $workflow -Needle 'secrets: inherit' -Name 'blanket secret inheritance is forbidden'
+Assert-NotContains -Text $workflow -Needle 'write-all' -Name 'write-all permission is forbidden'
+Assert-NotContains -Text $workflow -Needle '--dangerously-skip-permissions' -Name 'unsafe AGY permission bypass is forbidden'
+Assert-NotContains -Text $workflow -Needle 'persist-credentials: true' -Name 'self-hosted checkouts never persist credentials'
+
+Assert-Matches -Text $caller -Pattern '(?m)^  pull_request_target:\s*$' -Name 'caller executes from the trusted default-branch PR context'
+Assert-NotMatches -Text $caller -Pattern '(?m)^  pull_request:\s*$' -Name 'caller never executes from a PR-controlled workflow ref'
+Assert-Contains -Text $caller -Needle 'types: [opened, reopened, synchronize, ready_for_review]' -Name 'caller event allowlist matches governance'
+Assert-Contains -Text $caller -Needle 'github.event.pull_request.draft == false' -Name 'caller rejects drafts before reusable workflow allocation'
+Assert-Contains -Text $caller -Needle 'github.event.pull_request.base.ref == github.event.repository.default_branch' -Name 'caller rejects non-default base branches'
+Assert-Contains -Text $caller -Needle 'github.event.pull_request.base.repo.full_name == github.repository' -Name 'caller requires the trusted base repository'
+Assert-Contains -Text $caller -Needle 'github.event.pull_request.head.repo.full_name == github.repository' -Name 'caller rejects fork or cross-repository heads'
+Assert-Contains -Text $caller -Needle 'github.event.pull_request.head.repo.id == github.event.pull_request.base.repo.id' -Name 'caller binds repository identity by immutable ID'
+Assert-Contains -Text $caller -Needle "github.event.pull_request.user.login == 'REPLACE_WITH_AUTHORIZED_PR_LOGIN_CONDITION'" -Name 'caller authorizes PR signing before allocation'
+Assert-Contains -Text $caller -Needle "authorized_pr_login: 'REPLACE_WITH_AUTHORIZED_PR_LOGIN_INPUT'" -Name 'caller passes the same authorized login to the reusable workflow'
+Assert-Contains -Text $caller -Needle 'REPLACE_WITH_INFRASTRUCTURE_REPOSITORY/.github/workflows/review.yml@REPLACE_WITH_PINNED_COMMIT_SHA' -Name 'caller pins the reusable workflow by exact infrastructure commit'
+Assert-NotContains -Text $caller -Needle 'secrets: inherit' -Name 'caller maps secrets explicitly'
+Assert-Contains -Text $caller -Needle '  pull-requests: read' -Name 'caller grants the reusable workflow pull-request read permission'
+Assert-Contains -Text $workflow -Needle '  pull-requests: read' -Name 'reusable workflow declares the pull-request read ceiling required by live-state checks'
+
+Assert-Contains -Text $workflow -Needle "github.event_name == 'pull_request_target'" -Name 'reusable workflow independently requires the trusted-base event'
+Assert-Contains -Text $workflow -Needle 'contains(fromJSON(' -Name 'reusable workflow repeats the action allowlist before runner allocation'
+Assert-Contains -Text $workflow -Needle 'github.event.pull_request.draft == false' -Name 'reusable workflow repeats draft rejection'
+Assert-Contains -Text $workflow -Needle 'github.event.pull_request.base.ref == github.event.repository.default_branch' -Name 'reusable workflow repeats base-branch validation'
+Assert-Contains -Text $workflow -Needle 'github.event.pull_request.head.repo.full_name == github.repository' -Name 'reusable workflow repeats same-repository validation'
+Assert-Contains -Text $workflow -Needle 'github.event.pull_request.head.repo.id == github.event.pull_request.base.repo.id' -Name 'reusable workflow repeats repository-ID validation'
+Assert-Contains -Text $workflow -Needle 'github.event.pull_request.user.login == inputs.authorized_pr_login' -Name 'sign job rechecks authorized PR author'
+Assert-Contains -Text $workflow -Needle '-ExpectedAuthorLogin $env:AUTHORIZED_PR_LOGIN' -Name 'PR context resolver rechecks authorized PR author'
+
+$signJobText = Get-JobText -Start '  sign:' -End '  review:'
+$reviewJobText = Get-JobText -Start '  review:' -End '  publisher:'
+$publisherJobText = Get-JobText -Start '  publisher:'
+
+$signInfra = $signJobText.IndexOf('- name: Checkout trusted Antigravity-CI implementation', [StringComparison]::Ordinal)
+$signSecurity = $signJobText.IndexOf('- name: Verify signing runner security boundary', [StringComparison]::Ordinal)
+$signTarget = $signJobText.IndexOf('- name: Prepare bare signing target', [StringComparison]::Ordinal)
+if ($signInfra -lt 0 -or $signSecurity -le $signInfra -or $signTarget -le $signSecurity) {
+    throw 'Signing runner must verify trusted infrastructure and host policy before fetching PR Git objects.'
+}
+Write-Host '[PASS] signing runner preflight precedes PR object fetch'
+
+$reviewInfra = $reviewJobText.IndexOf('- name: Checkout trusted Antigravity-CI implementation', [StringComparison]::Ordinal)
+$reviewSecurity = $reviewJobText.IndexOf('- name: Verify isolated review runner security boundary', [StringComparison]::Ordinal)
+$reviewSandbox = $reviewJobText.IndexOf('- name: Verify Antigravity sandbox runtime boundary', [StringComparison]::Ordinal)
+$reviewTarget = $reviewJobText.IndexOf('- name: Checkout exact signed PR head without credentials', [StringComparison]::Ordinal)
+if ($reviewInfra -lt 0 -or
+    $reviewSecurity -le $reviewInfra -or
+    $reviewSandbox -le $reviewSecurity -or
+    $reviewTarget -le $reviewSandbox) {
+    throw 'Review runner must verify trusted infrastructure, host policy, and live sandbox containment before checking out PR code.'
+}
+Write-Host '[PASS] review runner host and sandbox preflight precede untrusted PR checkout'
+Assert-Contains -Text $reviewJobText -Needle 'scripts\Test-AgySandboxSmoke.ps1' -Name 'review job requires the live sandbox smoke test'
+Assert-Contains -Text $reviewJobText -Needle '-ExpectedAgySha256 $env:AGY_SHA256' -Name 'sandbox smoke is bound to the pinned AGY executable hash'
+
+$checkoutMatches = [regex]::Matches($workflow, 'actions/checkout@([0-9a-f]{40})')
+if ($checkoutMatches.Count -ne 4) {
+    throw "Expected four immutable checkout uses, found $($checkoutMatches.Count)."
+}
+Write-Host '[PASS] all checkout actions are full-SHA pinned'
+
+$safeDirectoryMatches = [regex]::Matches($workflow, '(?m)^\s*set-safe-directory:\s*false\s*$')
+if ($safeDirectoryMatches.Count -ne $checkoutMatches.Count) {
+    throw 'Every checkout must disable persistent global safe.directory mutation.'
+}
+Write-Host '[PASS] every checkout disables persistent safe.directory mutation'
+
+if ([regex]::Matches($workflow, '(?m)^\s*lfs:\s*false\s*$').Count -lt 1 -or
+    [regex]::Matches($workflow, '(?m)^\s*submodules:\s*false\s*$').Count -lt 1) {
+    throw 'The untrusted review checkout must explicitly disable LFS and submodules.'
+}
+Write-Host '[PASS] untrusted review checkout explicitly disables LFS and submodules'
+
+$usesMatches = [regex]::Matches(
+    $workflow,
+    '(?m)^\s*uses:\s*(?<target>[^\s#]+)\s*$',
+    [System.Text.RegularExpressions.RegexOptions]::CultureInvariant
+)
+foreach ($match in $usesMatches) {
+    $target = $match.Groups['target'].Value
+    if ($target.StartsWith('./', [StringComparison]::Ordinal)) {
+        continue
+    }
+
+    if ($target -notmatch '@[0-9a-f]{40}$') {
+        throw "External action or reusable workflow is not pinned by an immutable SHA: $target"
+    }
+}
+Write-Host '[PASS] every external action use is immutable-SHA pinned'
+
+Assert-Contains -Text $workflow -Needle "needs.sign.outputs.rewritten == 'false'" -Name 'AGY review is blocked in the signing-rewrite run'
+Assert-Contains -Text $workflow -Needle 'Signed history was pushed. This run stops before AGY review.' -Name 'fresh synchronize barrier is explicit'
+Assert-Contains -Text $workflow -Needle ('SIGNING_PUSH_TOKEN: $' + '{{ secrets.signing_push_token }}') -Name 'signing write credential is scoped to the signing step'
+Assert-NotMatches -Text $workflow -Pattern '(?m)^\s*token:\s*\$\{\{\s*secrets\.signing_push_token\s*\}\}' -Name 'signing write credential is never persisted by checkout'
+Assert-Contains -Text $workflow -Needle 'http.https://github.com/.extraheader' -Name 'signing push authentication is process-scoped'
+Assert-Contains -Text $workflow -Needle '$env:SIGNING_PUSH_TOKEN = $null' -Name 'signing token variable is cleared after use'
+Assert-Contains -Text $prepareSigningScript -Needle '$expectedRemoteUrl = ''https://github.com/'' + $Repository + ''.git''' -Name 'signing object fetch canonicalizes origin to the trusted GitHub repository'
+Assert-Contains -Text $prepareSigningScript -Needle 'remote.origin.pushurl' -Name 'signing object fetch rejects a separate push endpoint'
+Assert-Contains -Text $signJobText -Needle '-ExpectedRemoteUrl $env:EXPECTED_REMOTE_URL' -Name 'signing gate binds fetch and push to the validated canonical endpoint'
+
+$prepareSigningPosition = $signJobText.IndexOf('- name: Prepare bare signing target', [StringComparison]::Ordinal)
+$credentialSigningPosition = $signJobText.IndexOf('- name: Sign exact feature history with dedicated credential', [StringComparison]::Ordinal)
+if ($prepareSigningPosition -lt 0 -or
+    $credentialSigningPosition -le $prepareSigningPosition) {
+    throw 'Signing target preparation must run before the credential-bearing signing step.'
+}
+
+$prepareSigningText = $signJobText.Substring(
+    $prepareSigningPosition,
+    $credentialSigningPosition - $prepareSigningPosition
+)
+Assert-NotContains -Text $prepareSigningText -Needle 'signing_push_token' -Name 'signing-target preparation has no branch-update secret'
+Assert-NotContains -Text $prepareSigningText -Needle 'SIGNING_PUSH_TOKEN' -Name 'signing-target preparation has no secret environment alias'
+
+$secretMaterializationPosition = $signJobText.IndexOf('SIGNING_PUSH_TOKEN:', [StringComparison]::Ordinal)
+$credentialEncodingPosition = $signJobText.IndexOf('$encodedCredential =', [StringComparison]::Ordinal)
+if ($prepareSigningPosition -lt 0 -or
+    $secretMaterializationPosition -lt 0 -or
+    $credentialEncodingPosition -lt 0 -or
+    $prepareSigningPosition -ge $secretMaterializationPosition -or
+    $secretMaterializationPosition -ge $credentialEncodingPosition) {
+    throw 'Bare signing target validation must complete before the write credential is materialized and encoded.'
+}
+Write-Host '[PASS] signing endpoint is bound before write credential materialization'
+
+Assert-Contains -Text $workflow -Needle 'Enforce capability ceiling and runtime readiness' -Name 'capability policy is enforced before AGY'
+Assert-Contains -Text $workflow -Needle 'default: false' -Name 'sensitive capability deployment ceilings default to denied'
+Assert-Contains -Text $reviewJobText -Needle '-ExpectedBaseSha $env:TARGET_BASE' -Name 'review binds live state to the trusted base SHA'
+Assert-Contains -Text $reviewJobText -Needle '-ExpectedBaseRef $env:TARGET_BASE_REF' -Name 'review binds live state to the trusted base ref'
+Assert-Contains -Text $publisherJobText -Needle '-ExpectedBaseSha $env:TARGET_BASE' -Name 'publisher refuses reports after trusted base movement'
+Assert-Contains -Text $publisherJobText -Needle '-ExpectedBaseRef $env:TARGET_BASE_REF' -Name 'publisher binds publication to the trusted base ref'
+
+Assert-Contains -Text $workflow -Needle 'report_sha256:' -Name 'review exports the validated report digest'
+Assert-Contains -Text $workflow -Needle 'Hash validated report' -Name 'review hashes the report before artifact upload'
+Assert-Contains -Text $publisherJobText -Needle 'Verify downloaded report digest' -Name 'publisher verifies report bytes before publication'
+Assert-Contains -Text $publisherJobText -Needle 'needs.review.outputs.report_sha256' -Name 'publisher digest is bound to review output'
+Assert-NotContains -Text $publisherJobText -Needle 'Checkout exact signed PR head' -Name 'publisher never checks out reviewed PR code'
+
+Assert-Contains -Text $publisherJobText -Needle 'actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1' -Name 'GitHub App token action is full-SHA pinned'
+Assert-NotContains -Text $reviewJobText -Needle 'reporter_app_private_key' -Name 'review job never materializes GitHub App private key'
+Assert-Contains -Text $publisherJobText -Needle ('private-key: $' + '{{ secrets.reporter_app_private_key }}') -Name 'GitHub App private key exists only at publisher token creation'
+Assert-Contains -Text $publisherJobText -Needle ('AGY_REPORTER_TOKEN: $' + '{{ steps.reporter_app.outputs.token }}') -Name 'GitHub App installation token feeds only the publisher script'
+Assert-Contains -Text $publisherJobText -Needle ('AGY_REPORTER_TOKEN: $' + '{{ secrets.reporter_token }}') -Name 'fallback reporter token exists only in publisher job'
+Assert-Contains -Text $publisherJobText -Needle 'permission-pull-requests: write' -Name 'GitHub App token requests only pull-request write permission'
+Assert-Contains -Text $publisherJobText -Needle ('repositories: $' + '{{ github.event.repository.name }}') -Name 'GitHub App token is scoped to the current repository'
+Assert-Contains -Text $publisherJobText -Needle ('owner: $' + '{{ github.repository_owner }}') -Name 'GitHub App token owner is explicit'
+
+Assert-Contains -Text $workflow -Needle 'signing_runner_identity:' -Name 'signing runner identity is exported for isolation'
+Assert-Contains -Text $workflow -Needle 'review_runner_identity:' -Name 'review runner identity is exported for publisher isolation'
+Assert-Contains -Text $workflow -Needle '-ForbiddenIdentity $env:SIGNING_RUNNER_IDENTITY' -Name 'review runner cannot reuse the signing identity'
+Assert-Contains -Text $workflow -Needle 'ForbiddenIdentities = @($env:REVIEW_RUNNER_IDENTITY)' -Name 'publisher cannot reuse the review identity'
+Assert-Contains -Text $workflow -Needle 'Path still exists after removal' -Name 'persistent workspace cleanup fails closed'
+
+$gitIsolationStepCount = [regex]::Matches(
+    $workflow,
+    '(?m)^\s*- name: Isolate Git host configuration\s*$'
+).Count
+if ($gitIsolationStepCount -ne 3) {
+    throw "Expected Git host isolation in all three privileged jobs, found $gitIsolationStepCount."
+}
+Write-Host '[PASS] every privileged job isolates host Git configuration before checkout'
+
+foreach ($requiredIsolation in @(
+    'GIT_CONFIG_NOSYSTEM=1',
+    'GIT_CONFIG_COUNT=0',
+    'GIT_CONFIG_PARAMETERS=',
+    'GIT_ATTR_NOSYSTEM=1',
+    'GIT_TEMPLATE_DIR=',
+    'core.hooksPath',
+    'core.attributesFile',
+    'credential.interactive'
+)) {
+    Assert-Contains -Text $workflow -Needle $requiredIsolation -Name "Git isolation configures $requiredIsolation"
+}
+
+if ([regex]::Matches($workflow, '-RequireGitIsolation').Count -ne 3) {
+    throw 'Every privileged runner preflight must require Git isolation.'
+}
+Write-Host '[PASS] every privileged runner preflight requires Git isolation'
+
+Assert-Contains -Text $signJobText -Needle '-SigningKey $env:TRUSTED_PUBLIC_KEY_PATH' -Name 'signing key selection is explicit and independent of ambient Git config'
+
+Assert-Contains -Text $caller -Needle "agy_sha256: 'REPLACE_WITH_AGY_SHA256'" -Name 'caller template requires a pinned AGY executable hash'
+Assert-Contains -Text $workflow -Needle '      agy_sha256:' -Name 'reusable workflow requires the AGY executable hash input'
+
+$agyHashBindings = [regex]::Matches(
+    $workflow,
+    '-ExpectedAgySha256 \$env:AGY_SHA256'
+).Count
+if ($agyHashBindings -ne 3) {
+    throw "Expected AGY SHA-256 pin at review preflight, sandbox attestation, and execution; found $agyHashBindings."
+}
+Write-Host '[PASS] AGY binary hash is enforced before preflight execution and review execution'
+
+Write-Host '[PASS] workflow contract is internally consistent'

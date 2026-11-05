@@ -13,6 +13,6 @@ windows = "cargo test --workspace"
 android = ".\\gradlew.bat connectedDebugAndroidTest"
 
 [features]
-adb = true
+adb = false
 network = false
 gui = false

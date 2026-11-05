@@ -1,0 +1,40 @@
+name: Antigravity CI
+
+on:
+  pull_request_target:
+    types: [opened, reopened, synchronize, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  review:
+    if: >-
+      github.event.pull_request.draft == false &&
+      github.event.pull_request.base.ref == github.event.repository.default_branch &&
+      github.event.pull_request.base.repo.full_name == github.repository &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.repo.id == github.event.pull_request.base.repo.id &&
+      github.event.pull_request.user.login == 'REPLACE_WITH_AUTHORIZED_PR_LOGIN_CONDITION'
+    uses: REPLACE_WITH_INFRASTRUCTURE_REPOSITORY/.github/workflows/review.yml@REPLACE_WITH_PINNED_COMMIT_SHA
+    with:
+      signing_runner_label: REPLACE_WITH_SIGNING_RUNNER_LABEL
+      authorized_pr_login: 'REPLACE_WITH_AUTHORIZED_PR_LOGIN_INPUT'
+      review_runner_label: REPLACE_WITH_REVIEW_RUNNER_LABEL
+      publisher_runner_label: REPLACE_WITH_PUBLISHER_RUNNER_LABEL
+      signing_public_key_path: 'REPLACE_WITH_SIGNING_PUBLIC_KEY_PATH'
+      review_trusted_public_key_path: 'REPLACE_WITH_REVIEW_PUBLIC_KEY_PATH'
+      expected_reporter_login: 'REPLACE_WITH_REPORTER_LOGIN'
+      reporter_app_client_id: ${{ vars.ANTIGRAVITY_REPORTER_APP_CLIENT_ID }}
+      agy_executable: agy
+      agy_sha256: 'REPLACE_WITH_AGY_SHA256'
+      print_timeout_seconds: 1200
+      allow_adb: false
+      allow_network: false
+      allow_gui: false
+    secrets:
+      signing_push_token: ${{ secrets.ANTIGRAVITY_SIGNING_PUSH_TOKEN }}
+      reporter_app_private_key: ${{ secrets.ANTIGRAVITY_REPORTER_APP_PRIVATE_KEY }}
+      reporter_token: ${{ secrets.ANTIGRAVITY_REPORTER_TOKEN }}
+      infrastructure_read_token: ${{ secrets.ANTIGRAVITY_INFRA_READ_TOKEN }}

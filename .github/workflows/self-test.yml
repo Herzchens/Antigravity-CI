@@ -1,0 +1,27 @@
+name: Hosted Self Test
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  powershell:
+    runs-on: windows-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+
+      - name: Show versions
+        shell: pwsh
+        run: |
+          Write-Host "PowerShell $($PSVersionTable.PSVersion)"
+          git --version
+          (Get-Command ssh-keygen -ErrorAction Stop).Source
+
+      - name: Run offline PowerShell suite
+        shell: pwsh
+        run: ./tests/powershell/Invoke-AllTests.ps1

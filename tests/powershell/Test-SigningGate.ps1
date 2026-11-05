@@ -40,7 +40,7 @@ foreach ($command in @('git', 'ssh-keygen')) {
     }
 }
 
-$sshKeygenProgram = (Get-Command ssh-keygen -ErrorAction Stop).Source
+$sshKeygenProgram = (Get-Command ssh-keygen -ErrorAction Stop | Select-Object -First 1).Source
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $gateScript = Join-Path $repoRoot 'scripts\Invoke-SigningGate.ps1'
@@ -113,8 +113,62 @@ try {
         HeadSha = $originalHead
         BranchName = 'feature'
         TrustedPublicKey = "$signingKey.pub"
+        SigningKey = $signingKey
         ExpectedRemoteHead = $originalHead
+        ExpectedRemoteUrl = $remoteRepo
         Push = $true
+    }
+
+    $unexpectedRemote = Join-Path $tempRoot 'unexpected.git'
+    Invoke-Checked -FilePath 'git' -Arguments @('init', '--bare', '--quiet', $unexpectedRemote)
+
+    Invoke-Checked -FilePath 'git' -Arguments @('config', '--local', 'remote.origin.pushurl', $unexpectedRemote) -WorkingDirectory $workRepo
+    $wrongPushRejected = $false
+    try {
+        & $gateScript @gateArguments | Out-Null
+    }
+    catch {
+        $wrongPushRejected = $true
+    }
+
+    if (-not $wrongPushRejected) {
+        throw 'Expected mismatched effective push URL to be rejected before signing.'
+    }
+
+    Invoke-Checked -FilePath 'git' -Arguments @('config', '--unset-all', 'remote.origin.pushurl') -WorkingDirectory $workRepo
+
+    Invoke-Checked -FilePath 'git' -Arguments @('remote', 'set-url', '--add', 'origin', $unexpectedRemote) -WorkingDirectory $workRepo
+    $multipleFetchRejected = $false
+    try {
+        & $gateScript @gateArguments | Out-Null
+    }
+    catch {
+        $multipleFetchRejected = $true
+    }
+
+    if (-not $multipleFetchRejected) {
+        throw 'Expected multiple fetch URLs to be rejected before signing.'
+    }
+
+    Invoke-Checked -FilePath 'git' -Arguments @('remote', 'set-url', '--delete', 'origin', ([regex]::Escape($unexpectedRemote))) -WorkingDirectory $workRepo
+
+    $boundedCommitParameters = $gateArguments.Clone()
+    $boundedCommitParameters.MaxCommits = 1
+    $commitLimitRejected = $false
+
+    try {
+        & $gateScript @boundedCommitParameters | Out-Null
+    }
+    catch {
+        if ($_.Exception.Message -notlike '*exceeding the maximum allowed 1*') {
+            throw
+        }
+
+        $commitLimitRejected = $true
+    }
+
+    if (-not $commitLimitRejected) {
+        throw 'Expected signing range above MaxCommits to fail closed before rewrite.'
     }
 
     $result = & $gateScript @gateArguments
@@ -230,20 +284,39 @@ try {
     Add-Content -LiteralPath (Join-Path $workRepo 'fixture.txt') -Value 'three'
     Invoke-Checked -FilePath 'git' -Arguments @('add', 'fixture.txt') -WorkingDirectory $workRepo
     Invoke-Checked -FilePath 'git' -Arguments @('commit', '--quiet', '-m', 'third change') -WorkingDirectory $workRepo
-    Invoke-Checked -FilePath 'git' -Arguments @('push', '-q', 'origin', 'feature') -WorkingDirectory $workRepo
 
-    $movedHead = (
+    $staleCandidate = (
         Invoke-Checked -FilePath 'git' -Arguments @('rev-parse', 'HEAD') -WorkingDirectory $workRepo |
         Select-Object -First 1
     ).Trim()
 
+    Invoke-Checked -FilePath 'git' -Arguments @('push', '-q', 'origin', 'feature') -WorkingDirectory $workRepo
+
+    Add-Content -LiteralPath (Join-Path $workRepo 'fixture.txt') -Value 'four'
+    Invoke-Checked -FilePath 'git' -Arguments @('add', 'fixture.txt') -WorkingDirectory $workRepo
+    Invoke-Checked -FilePath 'git' -Arguments @('commit', '--quiet', '-m', 'remote moves again') -WorkingDirectory $workRepo
+    Invoke-Checked -FilePath 'git' -Arguments @('push', '-q', 'origin', 'feature') -WorkingDirectory $workRepo
+
+    $remoteMovedHead = (
+        Invoke-Checked -FilePath 'git' -Arguments @('rev-parse', 'HEAD') -WorkingDirectory $workRepo |
+        Select-Object -First 1
+    ).Trim()
+
+    if ($remoteMovedHead -eq $staleCandidate) {
+        throw 'Stale-race fixture did not advance the remote branch.'
+    }
+
+    Invoke-Checked -FilePath 'git' -Arguments @('reset', '--hard', $staleCandidate) -WorkingDirectory $workRepo | Out-Null
+
     $staleGateArguments = @{
         RepositoryPath = $workRepo
         BaseSha = $baseSha
-        HeadSha = $movedHead
+        HeadSha = $staleCandidate
         BranchName = 'feature'
         TrustedPublicKey = "$signingKey.pub"
-        ExpectedRemoteHead = $result.SignedHeadSha
+        SigningKey = $signingKey
+        ExpectedRemoteHead = $staleCandidate
+        ExpectedRemoteUrl = $remoteRepo
         Push = $true
     }
 
@@ -259,10 +332,235 @@ try {
         throw 'Expected stale remote lease to be rejected.'
     }
 
+    $baseTree = (
+        Invoke-Checked -FilePath 'git' -Arguments @('rev-parse', "$baseSha^{tree}") -WorkingDirectory $workRepo |
+        Select-Object -First 1
+    ).Trim()
+
+    $rawCommitPath = Join-Path $tempRoot 'unsupported-header.commit'
+    $rawCommit = @(
+        "tree $baseTree",
+        "parent $baseSha",
+        'author Metadata Fixture <fixture@example.invalid> 1700000000 +0000',
+        'committer Metadata Fixture <fixture@example.invalid> 1700000000 +0000',
+        'encoding ISO-8859-1',
+        '',
+        'metadata fixture'
+    ) -join [char] 10
+
+    [System.IO.File]::WriteAllText(
+        $rawCommitPath,
+        $rawCommit,
+        [System.Text.UTF8Encoding]::new($false)
+    )
+
+    $unsupportedHeaderSha = (
+        Invoke-Checked -FilePath 'git' -Arguments @(
+            'hash-object',
+            '-t',
+            'commit',
+            '-w',
+            $rawCommitPath
+        ) -WorkingDirectory $workRepo |
+        Select-Object -First 1
+    ).Trim()
+
+    $unsupportedHeaderParameters = @{
+        RepositoryPath = $workRepo
+        BaseSha = $baseSha
+        HeadSha = $unsupportedHeaderSha
+        BranchName = 'metadata-fixture'
+        TrustedPublicKey = "$signingKey.pub"
+        SigningKey = $signingKey
+    }
+
+    $unsupportedHeaderRejected = $false
+    try {
+        & $gateScript @unsupportedHeaderParameters | Out-Null
+    }
+    catch {
+        if ($_.Exception.Message -notlike "*unsupported header 'encoding'*") {
+            throw
+        }
+
+        $unsupportedHeaderRejected = $true
+    }
+
+    if (-not $unsupportedHeaderRejected) {
+        throw 'Expected signing rewrite with an unsupported commit header to fail closed.'
+    }
+
+    $duplicateAuthorPath = Join-Path $tempRoot 'duplicate-author.commit'
+    $duplicateAuthorCommit = @(
+        "tree $baseTree",
+        "parent $baseSha",
+        'author First Author <first@example.invalid> 1700000000 +0000',
+        'author Second Author <second@example.invalid> 1700000001 +0000',
+        'committer Metadata Fixture <fixture@example.invalid> 1700000002 +0000',
+        '',
+        'duplicate author fixture'
+    ) -join [char] 10
+
+    [System.IO.File]::WriteAllText(
+        $duplicateAuthorPath,
+        $duplicateAuthorCommit,
+        [System.Text.UTF8Encoding]::new($false)
+    )
+
+    $duplicateAuthorSha = (
+        Invoke-Checked -FilePath 'git' -Arguments @(
+            'hash-object',
+            '-t',
+            'commit',
+            '-w',
+            '--literally',
+            $duplicateAuthorPath
+        ) -WorkingDirectory $workRepo |
+        Select-Object -First 1
+    ).Trim()
+
+    $duplicateAuthorParameters = @{
+        RepositoryPath = $workRepo
+        BaseSha = $baseSha
+        HeadSha = $duplicateAuthorSha
+        BranchName = 'duplicate-author-fixture'
+        TrustedPublicKey = "$signingKey.pub"
+        SigningKey = $signingKey
+    }
+
+    $duplicateAuthorRejected = $false
+    try {
+        & $gateScript @duplicateAuthorParameters | Out-Null
+    }
+    catch {
+        if ($_.Exception.Message -notlike "*exactly one 'author' header*") {
+            throw
+        }
+
+        $duplicateAuthorRejected = $true
+    }
+
+    if (-not $duplicateAuthorRejected) {
+        throw 'Expected duplicate author metadata to be rejected before signing rewrite.'
+    }
+
+    $nonCanonicalIdentityPath = Join-Path $tempRoot 'noncanonical-identity.commit'
+    $nonCanonicalIdentityCommit = @(
+        "tree $baseTree",
+        "parent $baseSha",
+        'author   Spaced  Author <spaced@example.invalid> 01700000000 +0000',
+        'committer Metadata Fixture <fixture@example.invalid> 1700000002 +0000',
+        '',
+        'noncanonical identity fixture'
+    ) -join [char] 10
+
+    [System.IO.File]::WriteAllText(
+        $nonCanonicalIdentityPath,
+        $nonCanonicalIdentityCommit,
+        [System.Text.UTF8Encoding]::new($false)
+    )
+
+    $nonCanonicalIdentitySha = (
+        Invoke-Checked -FilePath 'git' -Arguments @(
+            'hash-object',
+            '-t',
+            'commit',
+            '-w',
+            '--literally',
+            $nonCanonicalIdentityPath
+        ) -WorkingDirectory $workRepo |
+        Select-Object -First 1
+    ).Trim()
+
+    $nonCanonicalIdentityParameters = @{
+        RepositoryPath = $workRepo
+        BaseSha = $baseSha
+        HeadSha = $nonCanonicalIdentitySha
+        BranchName = 'noncanonical-identity-fixture'
+        TrustedPublicKey = "$signingKey.pub"
+        SigningKey = $signingKey
+    }
+
+    $nonCanonicalIdentityRejected = $false
+    try {
+        & $gateScript @nonCanonicalIdentityParameters | Out-Null
+    }
+    catch {
+        if ($_.Exception.Message -notlike '*changed the raw author header*') {
+            throw
+        }
+
+        $nonCanonicalIdentityRejected = $true
+    }
+
+    if (-not $nonCanonicalIdentityRejected) {
+        throw 'Expected non-canonical raw author metadata to fail closed rather than be normalized.'
+    }
+
+    $oversizedCommitPath = Join-Path $tempRoot 'oversized.commit'
+    $oversizedCommit = @(
+        "tree $baseTree",
+        "parent $baseSha",
+        'author Size Fixture <size@example.invalid> 1700000000 +0000',
+        'committer Size Fixture <size@example.invalid> 1700000000 +0000',
+        '',
+        ('x' * 2048)
+    ) -join [char] 10
+
+    [System.IO.File]::WriteAllText(
+        $oversizedCommitPath,
+        $oversizedCommit,
+        [System.Text.UTF8Encoding]::new($false)
+    )
+
+    $oversizedCommitSha = (
+        Invoke-Checked -FilePath 'git' -Arguments @(
+            'hash-object',
+            '-t',
+            'commit',
+            '-w',
+            '--literally',
+            $oversizedCommitPath
+        ) -WorkingDirectory $workRepo |
+        Select-Object -First 1
+    ).Trim()
+
+    $oversizedParameters = @{
+        RepositoryPath = $workRepo
+        BaseSha = $baseSha
+        HeadSha = $oversizedCommitSha
+        BranchName = 'oversized-fixture'
+        TrustedPublicKey = "$signingKey.pub"
+        SigningKey = $signingKey
+        MaxCommitObjectBytes = 1024
+    }
+
+    $oversizedRejected = $false
+    try {
+        & $gateScript @oversizedParameters | Out-Null
+    }
+    catch {
+        if ($_.Exception.Message -notlike '*exceeds the maximum allowed size of 1024 bytes*') {
+            throw
+        }
+
+        $oversizedRejected = $true
+    }
+
+    if (-not $oversizedRejected) {
+        throw 'Expected oversized commit object to fail closed before signing rewrite.'
+    }
+
+    Write-Host '[PASS] signer rejects feature history above the configured commit-count limit'
+    Write-Host '[PASS] signer rejects oversized commit objects before loading/rewrite'
     Write-Host '[PASS] preserve mode keeps commit count and commit subjects'
     Write-Host '[PASS] final tree is unchanged'
     Write-Host '[PASS] every rewritten commit verifies with the trusted SSH key'
-    Write-Host '[PASS] stale remote head is rejected before lease-protected update'
+    Write-Host '[PASS] signing gate rejects mismatched or ambiguous remote endpoints before signing'
+    Write-Host '[PASS] real remote-head race is rejected before lease-protected update'
+    Write-Host '[PASS] unsupported commit headers are rejected instead of being lost during rewrite'
+    Write-Host '[PASS] duplicate required commit headers are rejected instead of being collapsed during rewrite'
+    Write-Host '[PASS] raw author/committer headers must round-trip byte-for-byte through signing rewrite'
 }
 finally {
     if (Test-Path -LiteralPath $tempRoot) {
