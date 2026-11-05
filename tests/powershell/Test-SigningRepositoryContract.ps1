@@ -12,6 +12,10 @@ function Forbid { param([string]$Text,[string]$Needle,[string]$Name); if($Text.C
 
 Require $scriptText "'init', '--bare'" 'signing repository is bare'
 Require $scriptText "'--no-recurse-submodules'" 'signing fetch cannot initialize submodules'
+Require $scriptText '"+refs/heads/${BaseRef}:refs/remotes/origin/${BaseRef}"' 'base fetch refspec delimits interpolated branch name'
+Require $scriptText '"+refs/heads/${HeadRef}:refs/remotes/origin/${HeadRef}"' 'head fetch refspec delimits interpolated branch name'
+Forbid $scriptText '$BaseRef:refs' 'base fetch refspec cannot be parsed as scoped variable syntax'
+Forbid $scriptText '$HeadRef:refs' 'head fetch refspec cannot be parsed as scoped variable syntax'
 Require $scriptText "`$expectedRemoteUrl = 'https://github.com/' + `$Repository + '.git'" 'signing origin is canonicalized'
 Require $scriptText 'remote.origin.pushurl' 'separate pushurl is rejected'
 Require $scriptText 'Trusted base moved from event SHA' 'base movement fails closed'
