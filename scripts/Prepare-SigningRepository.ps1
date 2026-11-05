@@ -63,9 +63,17 @@ function Invoke-Git {
         $stderrTask = $process.StandardError.ReadToEndAsync()
         $process.WaitForExit()
         $stdout = $stdoutTask.GetAwaiter().GetResult()
-        $null = $stderrTask.GetAwaiter().GetResult()
+        $stderr = $stderrTask.GetAwaiter().GetResult()
         if ($process.ExitCode -ne 0) {
-            throw "git command failed with exit code $($process.ExitCode)."
+            $command = 'git ' + (($Arguments | ForEach-Object {
+                if ($_ -match '\\s') { '"' + ($_ -replace '"', '\\"') + '"' }
+                else { $_ }
+            }) -join ' ')
+            $message = "git command failed with exit code $($process.ExitCode): $command"
+            if (-not [string]::IsNullOrWhiteSpace($stderr)) {
+                $message += [Environment]::NewLine + $stderr.TrimEnd()
+            }
+            throw $message
         }
         $stdout
     }
