@@ -1,4 +1,4 @@
-#requires -Version 7.4
+﻿#requires -Version 7.4
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -38,7 +38,8 @@ $tests = @(
     'Test-PublishBoundary.ps1',
     'Test-LocalGitGuards.ps1',
     'Test-LocalCiAccountInitializationContract.ps1',
-    'Test-OperatorBootstrapContract.ps1'
+    'Test-OperatorBootstrapContract.ps1',
+    'Test-AgyPinnedBinaryContract.ps1'
 )
 
 $failed = [System.Collections.Generic.List[string]]::new()
