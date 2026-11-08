@@ -37,7 +37,7 @@ function Assert-BranchRef {
     $Ref
 }
 
-function Invoke-Git {
+function Invoke-GitProcess {
     param(
         [Parameter(Mandatory)][string[]] $Arguments,
         [hashtable] $Environment = @{}
@@ -64,20 +64,69 @@ function Invoke-Git {
         $process.WaitForExit()
         $stdout = $stdoutTask.GetAwaiter().GetResult()
         $stderr = $stderrTask.GetAwaiter().GetResult()
-        if ($process.ExitCode -ne 0) {
-            $command = 'git ' + (($Arguments | ForEach-Object {
-                if ($_ -match '\\s') { '"' + ($_ -replace '"', '\\"') + '"' }
-                else { $_ }
-            }) -join ' ')
-            $message = "git command failed with exit code $($process.ExitCode): $command"
-            if (-not [string]::IsNullOrWhiteSpace($stderr)) {
-                $message += [Environment]::NewLine + $stderr.TrimEnd()
-            }
-            throw $message
+        [pscustomobject]@{
+            ExitCode = $process.ExitCode
+            StandardOutput = $stdout
+            StandardError = $stderr
         }
-        $stdout
     }
     finally { $process.Dispose() }
+}
+
+function Invoke-Git {
+    param(
+        [Parameter(Mandatory)][string[]] $Arguments,
+        [hashtable] $Environment = @{}
+    )
+
+    $result = Invoke-GitProcess -Arguments $Arguments -Environment $Environment
+    if ($result.ExitCode -ne 0) {
+        $command = 'git ' + (($Arguments | ForEach-Object {
+            if ($_ -match '\s') { '"' + ($_ -replace '"', '\"') + '"' }
+            else { $_ }
+        }) -join ' ')
+        $message = "git command failed with exit code $($result.ExitCode): $command"
+        if (-not [string]::IsNullOrWhiteSpace($result.StandardError)) {
+            $message += [Environment]::NewLine + $result.StandardError.TrimEnd()
+        }
+        throw $message
+    }
+    $result.StandardOutput
+}
+
+function Assert-NoSeparateOriginPushUrl {
+    param(
+        [Parameter(Mandatory)][string] $RepositoryPath,
+        [scriptblock] $ProcessInvoker = $null
+    )
+
+    $result = if ($null -ne $ProcessInvoker) {
+        & $ProcessInvoker @('-C', $RepositoryPath, 'config', '--local', '--get-all', 'remote.origin.pushurl')
+    }
+    else {
+        Invoke-GitProcess -Arguments @('-C', $RepositoryPath, 'config', '--local', '--get-all', 'remote.origin.pushurl')
+    }
+
+    if ($result.ExitCode -eq 0) {
+        $lines = @($result.StandardOutput -split '\r?\n' | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+        if ($lines.Count -gt 0) {
+            throw 'Bare signing repository must not configure a separate origin pushurl.'
+        }
+        throw 'git config remote.origin.pushurl unexpectedly returned exit code 0 without output.'
+    }
+    elseif ($result.ExitCode -eq 1) {
+        if (-not [string]::IsNullOrWhiteSpace($result.StandardOutput)) {
+            throw "git config remote.origin.pushurl failed with exit code 1 but returned unexpected stdout: $($result.StandardOutput.Trim())"
+        }
+        return
+    }
+    else {
+        $message = "git config remote.origin.pushurl failed with exit code $($result.ExitCode)"
+        if (-not [string]::IsNullOrWhiteSpace($result.StandardError)) {
+            $message += ": $($result.StandardError.Trim())"
+        }
+        throw $message
+    }
 }
 
 $null = Get-Command git -ErrorAction Stop
@@ -117,10 +166,7 @@ try {
     Invoke-Git -Arguments @('init', '--bare', $repositoryRoot) | Out-Null
     Invoke-Git -Arguments @('-C', $repositoryRoot, 'remote', 'add', 'origin', $expectedRemoteUrl) | Out-Null
 
-    $configuredPushUrls = @(& git -C $repositoryRoot config --local --get-all remote.origin.pushurl 2>$null)
-    if ($LASTEXITCODE -eq 0 -and $configuredPushUrls.Count -gt 0) {
-        throw 'Bare signing repository must not configure a separate origin pushurl.'
-    }
+    Assert-NoSeparateOriginPushUrl -RepositoryPath $repositoryRoot
 
     Invoke-Git -Arguments @(
         '-C', $repositoryRoot,
