@@ -1,4 +1,4 @@
-﻿#requires -Version 7.4
+#requires -Version 7.4
 
 <#
 .SYNOPSIS
@@ -44,7 +44,7 @@
         -ExpectedExecutableSha256 'cffaeb65f38d048747e447632d70660406d8b214ca724c5e240a5cfc724aabcb'
 #>
 
-[CmdletBinding(SupportsShouldProcess)]
+[CmdletBinding()]
 param(
     [Parameter(Mandatory)]
     [ValidatePattern('^\d+\.\d+\.\d+$')]

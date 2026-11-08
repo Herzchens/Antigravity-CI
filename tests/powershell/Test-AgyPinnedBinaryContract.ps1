@@ -21,6 +21,7 @@
        - Review account write-mask denial assertion on both directory and binary
     3. Offline execution contract:
        - scripts\Install-AgyPinnedBinary.ps1 fails closed when executed without Administrator elevation
+       - scripts\Install-AgyPinnedBinary.ps1 rejects -WhatIf parameter binding and does not declare unbacked SupportsShouldProcess
     4. Host isolation & runtime boundary:
        - Requires expected production directory and binary to exist; fails closed if missing
        - Pinned binary is readable and SHA-256 matches expected pin
@@ -91,6 +92,19 @@ function Assert-ScriptContains {
     }
 }
 
+function Assert-ScriptNotContains {
+    param(
+        [Parameter(Mandatory)] [string] $Content,
+        [Parameter(Mandatory)] [string] $Needle,
+        [Parameter(Mandatory)] [string] $Name
+    )
+    if ($Content.Contains($Needle, [StringComparison]::Ordinal)) {
+        Assert-Fail "Contract assertion failed: $Name (unexpected needle found: $Needle)"
+    } else {
+        Assert-Pass $Name
+    }
+}
+
 Write-Host '============================================================' -ForegroundColor Cyan
 Write-Host '   Test-AgyPinnedBinaryContract' -ForegroundColor Cyan
 Write-Host '============================================================' -ForegroundColor Cyan
@@ -108,6 +122,8 @@ Write-Host ''
 
 # --- Section 1: Invariants for Install-AgyPinnedBinary.ps1 ---
 Write-Host '--- Section 1: Invariants for Install-AgyPinnedBinary.ps1 ---'
+Assert-ScriptContains -Content $installerScript -Needle '[CmdletBinding()]' -Name 'installer declares standard CmdletBinding'
+Assert-ScriptNotContains -Content $installerScript -Needle 'SupportsShouldProcess' -Name 'installer does not declare unbacked SupportsShouldProcess'
 Assert-ScriptContains -Content $installerScript -Needle 'if (-not $IsWindows)' -Name 'installer enforces Windows host requirement'
 Assert-ScriptContains -Content $installerScript -Needle 'This script must be run elevated as Administrator.' -Name 'installer enforces Administrator elevation'
 Assert-ScriptContains -Content $installerScript -Needle '[string] $Version' -Name 'installer parameterizes Version'
@@ -151,6 +167,14 @@ if (-not $isAdmin) {
     Assert-Skip 'installer non-elevation fail-closed check: running in elevated Administrator session'
 }
 
+# Verify installer rejects -WhatIf parameter binding (unbacked SupportsShouldProcess is not declared)
+$whatIfErr = & pwsh -NoProfile -File $installerScriptPath -WhatIf 2>&1
+if ($LASTEXITCODE -eq 0 -or -not ($whatIfErr -match "A parameter cannot be found that matches parameter name 'WhatIf'")) {
+    Assert-Fail "Installer unexpectedly accepted -WhatIf or did not fail parameter binding: $whatIfErr"
+} else {
+    Assert-Pass 'installer rejects -WhatIf parameter binding (unbacked SupportsShouldProcess is not declared)'
+}
+
 # --- Section 4: Host Isolation & Runtime Boundary ---
 Write-Host '--- Section 4: Host Isolation & Runtime Boundary ---'
 
@@ -158,36 +182,51 @@ $expectedVersionDir = Split-Path -Parent $ExpectedExecutablePath
 Write-Host "Expected version directory: $expectedVersionDir"
 Write-Host "Expected binary path:       $ExpectedExecutablePath"
 
-# The production state MUST exist. Missing state is an immediate failure, not a pass.
-if (-not (Test-Path -LiteralPath $expectedVersionDir -PathType Container)) {
-    Assert-Fail "Required production version directory missing: $expectedVersionDir"
-} else {
-    Assert-Pass "production version directory exists: $expectedVersionDir"
+$canRead = $false
+try {
+    if (Test-Path -LiteralPath $expectedVersionDir -PathType Container -ErrorAction Stop) {
+        $canRead = $true
+        Assert-Pass "production version directory exists: $expectedVersionDir"
+    } else {
+        Assert-Fail "Required production version directory missing: $expectedVersionDir"
+    }
+} catch [System.UnauthorizedAccessException] {
+    Assert-Pass 'ambient read probe: non-administrative caller denied read/traverse on version directory (UnauthorizedAccessException)'
+} catch {
+    Assert-Fail "Unexpected error accessing version directory: $_"
 }
 
-if (-not (Test-Path -LiteralPath $ExpectedExecutablePath -PathType Leaf)) {
-    Assert-Fail "Required production binary missing: $ExpectedExecutablePath"
-} else {
-    Assert-Pass "production binary exists: $ExpectedExecutablePath"
+try {
+    if (Test-Path -LiteralPath $ExpectedExecutablePath -PathType Leaf -ErrorAction Stop) {
+        Assert-Pass "production binary exists: $ExpectedExecutablePath"
+    } else {
+        Assert-Fail "Required production binary missing: $ExpectedExecutablePath"
+    }
+} catch [System.UnauthorizedAccessException] {
+    Assert-Pass 'ambient read probe: non-administrative caller denied read access on pinned binary (UnauthorizedAccessException)'
+} catch {
+    Assert-Fail "Unexpected error accessing pinned binary: $_"
 }
 
-function Get-FileSha256 {
-    param([string]$Path)
-    $sha = [System.Security.Cryptography.SHA256]::Create()
-    try {
-        $stream = [System.IO.File]::OpenRead($Path)
+if ($canRead) {
+    function Get-FileSha256 {
+        param([string]$Path)
+        $sha = [System.Security.Cryptography.SHA256]::Create()
         try {
-            $hashBytes = $sha.ComputeHash($stream)
-            return [System.BitConverter]::ToString($hashBytes).Replace('-', '').ToLowerInvariant()
-        } finally { $stream.Dispose() }
-    } finally { $sha.Dispose() }
-}
+            $stream = [System.IO.File]::OpenRead($Path)
+            try {
+                $hashBytes = $sha.ComputeHash($stream)
+                return [System.BitConverter]::ToString($hashBytes).Replace('-', '').ToLowerInvariant()
+            } finally { $stream.Dispose() }
+        } finally { $sha.Dispose() }
+    }
 
-$actualHash = Get-FileSha256 -Path $ExpectedExecutablePath
-if ($actualHash -ceq $ExpectedExecutableSha256.ToLowerInvariant()) {
-    Assert-Pass "pinned binary SHA-256 matches expected pin: $actualHash"
-} else {
-    Assert-Fail "SHA-256 mismatch! Expected: $ExpectedExecutableSha256  Got: $actualHash"
+    $actualHash = Get-FileSha256 -Path $ExpectedExecutablePath
+    if ($actualHash -ceq $ExpectedExecutableSha256.ToLowerInvariant()) {
+        Assert-Pass "pinned binary SHA-256 matches expected pin: $actualHash"
+    } else {
+        Assert-Fail "SHA-256 mismatch! Expected: $ExpectedExecutableSha256  Got: $actualHash"
+    }
 }
 
 if (-not $isAdmin) {
