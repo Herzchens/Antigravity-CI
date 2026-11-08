@@ -1,4 +1,4 @@
-﻿#requires -Version 7.4
+#requires -Version 7.4
 
 [CmdletBinding()]
 param(
@@ -250,24 +250,23 @@ if (-not $match.Success -or $match.Value -cne $ExpectedFingerprint) {
 Write-Host "[PASS] Copied public-key fingerprint equals $ExpectedFingerprint" -ForegroundColor Green
 
 Write-Host ""
-Write-Host "====================================================" -ForegroundColor Green
-Write-Host " ALL SECURITY & ACL VERIFICATIONS PASSED (100%)      " -ForegroundColor Green
-Write-Host "====================================================" -ForegroundColor Green
-
-
-Write-Host ""
 Write-Host "====================================================" -ForegroundColor Cyan
 Write-Host " STEP 10: Verify Pinned AGY Binary                  " -ForegroundColor Cyan
 Write-Host "====================================================" -ForegroundColor Cyan
 
-# Verify pinned AGY binary exists, has correct SHA-256, correct ACLs,
-# and that the review account has only ReadAndExecute (no write).
-$pinnedAgyExe = Join-Path $PinnedAgyBinBase (Join-Path $PinnedAgyVersion 'agy.exe')
-Write-Host "Expected path: $pinnedAgyExe"
-Write-Host "Expected version: $PinnedAgyVersion"
-Write-Host "Expected SHA-256: $PinnedAgyExecutableSha256"
+# Verify pinned AGY version directory and binary exist, have correct SHA-256,
+# correct ACLs, and that the review account has only ReadAndExecute (no write) on both.
+$pinnedAgyDir = Join-Path $PinnedAgyBinBase $PinnedAgyVersion
+$pinnedAgyExe = Join-Path $pinnedAgyDir "agy.exe"
+Write-Host "Expected directory: $pinnedAgyDir"
+Write-Host "Expected path:      $pinnedAgyExe"
+Write-Host "Expected version:   $PinnedAgyVersion"
+Write-Host "Expected SHA-256:   $PinnedAgyExecutableSha256"
 
-if (-not (Test-Path -LiteralPath $pinnedAgyExe)) {
+if (-not (Test-Path -LiteralPath $pinnedAgyDir -PathType Container)) {
+    throw "Pinned AGY version directory not found at $pinnedAgyDir. Run Install-AgyPinnedBinary.ps1 first."
+}
+if (-not (Test-Path -LiteralPath $pinnedAgyExe -PathType Leaf)) {
     throw "Pinned AGY binary not found at $pinnedAgyExe. Run Install-AgyPinnedBinary.ps1 first."
 }
 
@@ -279,7 +278,7 @@ function Get-FileSha256 {
         $stream = [System.IO.File]::OpenRead($Path)
         try {
             $hashBytes = $sha.ComputeHash($stream)
-            return [System.BitConverter]::ToString($hashBytes).Replace('-', '').ToLowerInvariant()
+            return [System.BitConverter]::ToString($hashBytes).Replace("-", "").ToLowerInvariant()
         } finally { $stream.Dispose() }
     } finally { $sha.Dispose() }
 }
@@ -290,17 +289,48 @@ if ($actualHash -cne $PinnedAgyExecutableSha256.ToLowerInvariant()) {
 }
 Write-Host "[PASS] Pinned AGY binary SHA-256 verified: $actualHash" -ForegroundColor Green
 
-# ACL verification
+$allowedPinnedSids = @("S-1-5-18", "S-1-5-32-544", $reviewSid)
+
+# ACL verification - Version Directory
+$pinnedDirAcl = Get-Acl -LiteralPath $pinnedAgyDir
+if (-not $pinnedDirAcl.AreAccessRulesProtected) {
+    throw "Inheritance is not disabled on pinned AGY directory at $pinnedAgyDir"
+}
+
+$dirWriteMask = [Security.AccessControl.FileSystemRights]::Write -bor
+                [Security.AccessControl.FileSystemRights]::Delete -bor
+                [Security.AccessControl.FileSystemRights]::DeleteSubdirectoriesAndFiles -bor
+                [Security.AccessControl.FileSystemRights]::ChangePermissions -bor
+                [Security.AccessControl.FileSystemRights]::TakeOwnership
+$dirReviewRxFound = $false
+
+foreach ($rule in $pinnedDirAcl.Access) {
+    $sid = $rule.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value
+    if ($allowedPinnedSids -notcontains $sid) {
+        throw "Unexpected ACL principal on pinned AGY directory: $($rule.IdentityReference.Value) ($sid)"
+    }
+    if ($sid -eq $reviewSid) {
+        if ($rule.AccessControlType -eq "Allow" -and ($rule.FileSystemRights -band $dirWriteMask) -ne 0) {
+            throw "Security violation: review account has write/modify rights on pinned AGY directory!"
+        }
+        $dirReviewRxFound = $true
+    }
+}
+if (-not $dirReviewRxFound) {
+    throw "Review account ($reviewSid) has no ACE on pinned AGY directory"
+}
+Write-Host "[PASS] Pinned AGY directory ACL: inheritance disabled, SYSTEM(F)/Administrators(F)/$ReviewUserName(RX) only." -ForegroundColor Green
+
+# ACL verification - Executable File
 $pinnedAcl = Get-Acl -LiteralPath $pinnedAgyExe
 if (-not $pinnedAcl.AreAccessRulesProtected) {
     throw "Inheritance is not disabled on pinned AGY binary at $pinnedAgyExe"
 }
 
-$allowedPinnedSids = @('S-1-5-18', 'S-1-5-32-544', $reviewSid)
-$writeMask = [Security.AccessControl.FileSystemRights]::Write -bor
-              [Security.AccessControl.FileSystemRights]::Delete -bor
-              [Security.AccessControl.FileSystemRights]::ChangePermissions -bor
-              [Security.AccessControl.FileSystemRights]::TakeOwnership
+$fileWriteMask = [Security.AccessControl.FileSystemRights]::Write -bor
+                 [Security.AccessControl.FileSystemRights]::Delete -bor
+                 [Security.AccessControl.FileSystemRights]::ChangePermissions -bor
+                 [Security.AccessControl.FileSystemRights]::TakeOwnership
 $reviewRxFound = $false
 
 foreach ($rule in $pinnedAcl.Access) {
@@ -309,7 +339,7 @@ foreach ($rule in $pinnedAcl.Access) {
         throw "Unexpected ACL principal on pinned AGY binary: $($rule.IdentityReference.Value) ($sid)"
     }
     if ($sid -eq $reviewSid) {
-        if ($rule.AccessControlType -eq 'Allow' -and ($rule.FileSystemRights -band $writeMask) -ne 0) {
+        if ($rule.AccessControlType -eq "Allow" -and ($rule.FileSystemRights -band $fileWriteMask) -ne 0) {
             throw "Security violation: review account has write/modify rights on pinned AGY binary!"
         }
         $reviewRxFound = $true
@@ -320,3 +350,7 @@ if (-not $reviewRxFound) {
 }
 Write-Host "[PASS] Pinned AGY binary ACL: inheritance disabled, SYSTEM(F)/Administrators(F)/$ReviewUserName(RX) only." -ForegroundColor Green
 
+Write-Host ""
+Write-Host "====================================================" -ForegroundColor Green
+Write-Host " ALL SECURITY & ACL VERIFICATIONS PASSED (100%)      " -ForegroundColor Green
+Write-Host "====================================================" -ForegroundColor Green
