@@ -13,7 +13,12 @@ param(
     [string] $InstallBase = $(if (Test-Path 'D:\Antigravity-CI\runners') { 'D:\Antigravity-CI\runners' } else { 'C:\actions-runner' }),
     [string] $ProgramDataBase = 'C:\ProgramData\Antigravity-CI',
     [string] $ExpectedFingerprint = 'SHA256:20kPITIYb5mzSR9B3stmLoprDRmEGCUFgN0m8BNrJSc',
-    [string] $SigningIdentity = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+    [string] $SigningIdentity = [Security.Principal.WindowsIdentity]::GetCurrent().Name,
+
+    # AGY pinned binary verification
+    [string] $PinnedAgyVersion = '1.4.9',
+    [string] $PinnedAgyExecutableSha256 = 'cffaeb65f38d048747e447632d70660406d8b214ca724c5e240a5cfc724aabcb',
+    [string] $PinnedAgyBinBase = 'C:\ProgramData\Antigravity-CI\bin\agy'
 )
 
 Set-StrictMode -Version Latest
@@ -243,6 +248,107 @@ if (-not $match.Success -or $match.Value -cne $ExpectedFingerprint) {
     throw "Fingerprint mismatch! Got: $($match.Value), Expected: $ExpectedFingerprint"
 }
 Write-Host "[PASS] Copied public-key fingerprint equals $ExpectedFingerprint" -ForegroundColor Green
+
+Write-Host ""
+Write-Host "====================================================" -ForegroundColor Cyan
+Write-Host " STEP 10: Verify Pinned AGY Binary                  " -ForegroundColor Cyan
+Write-Host "====================================================" -ForegroundColor Cyan
+
+# Verify pinned AGY version directory and binary exist, have correct SHA-256,
+# correct ACLs, and that the review account has only ReadAndExecute (no write) on both.
+$pinnedAgyDir = Join-Path $PinnedAgyBinBase $PinnedAgyVersion
+$pinnedAgyExe = Join-Path $pinnedAgyDir "agy.exe"
+Write-Host "Expected directory: $pinnedAgyDir"
+Write-Host "Expected path:      $pinnedAgyExe"
+Write-Host "Expected version:   $PinnedAgyVersion"
+Write-Host "Expected SHA-256:   $PinnedAgyExecutableSha256"
+
+if (-not (Test-Path -LiteralPath $pinnedAgyDir -PathType Container)) {
+    throw "Pinned AGY version directory not found at $pinnedAgyDir. Run Install-AgyPinnedBinary.ps1 first."
+}
+if (-not (Test-Path -LiteralPath $pinnedAgyExe -PathType Leaf)) {
+    throw "Pinned AGY binary not found at $pinnedAgyExe. Run Install-AgyPinnedBinary.ps1 first."
+}
+
+# Hash verification
+function Get-FileSha256 {
+    param([string]$Path)
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $stream = [System.IO.File]::OpenRead($Path)
+        try {
+            $hashBytes = $sha.ComputeHash($stream)
+            return [System.BitConverter]::ToString($hashBytes).Replace("-", "").ToLowerInvariant()
+        } finally { $stream.Dispose() }
+    } finally { $sha.Dispose() }
+}
+
+$actualHash = Get-FileSha256 -Path $pinnedAgyExe
+if ($actualHash -cne $PinnedAgyExecutableSha256.ToLowerInvariant()) {
+    throw "Pinned AGY binary SHA-256 mismatch! Expected: $PinnedAgyExecutableSha256  Got: $actualHash"
+}
+Write-Host "[PASS] Pinned AGY binary SHA-256 verified: $actualHash" -ForegroundColor Green
+
+$allowedPinnedSids = @("S-1-5-18", "S-1-5-32-544", $reviewSid)
+
+# ACL verification - Version Directory
+$pinnedDirAcl = Get-Acl -LiteralPath $pinnedAgyDir
+if (-not $pinnedDirAcl.AreAccessRulesProtected) {
+    throw "Inheritance is not disabled on pinned AGY directory at $pinnedAgyDir"
+}
+
+$dirWriteMask = [Security.AccessControl.FileSystemRights]::Write -bor
+                [Security.AccessControl.FileSystemRights]::Delete -bor
+                [Security.AccessControl.FileSystemRights]::DeleteSubdirectoriesAndFiles -bor
+                [Security.AccessControl.FileSystemRights]::ChangePermissions -bor
+                [Security.AccessControl.FileSystemRights]::TakeOwnership
+$dirReviewRxFound = $false
+
+foreach ($rule in $pinnedDirAcl.Access) {
+    $sid = $rule.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value
+    if ($allowedPinnedSids -notcontains $sid) {
+        throw "Unexpected ACL principal on pinned AGY directory: $($rule.IdentityReference.Value) ($sid)"
+    }
+    if ($sid -eq $reviewSid) {
+        if ($rule.AccessControlType -eq "Allow" -and ($rule.FileSystemRights -band $dirWriteMask) -ne 0) {
+            throw "Security violation: review account has write/modify rights on pinned AGY directory!"
+        }
+        $dirReviewRxFound = $true
+    }
+}
+if (-not $dirReviewRxFound) {
+    throw "Review account ($reviewSid) has no ACE on pinned AGY directory"
+}
+Write-Host "[PASS] Pinned AGY directory ACL: inheritance disabled, SYSTEM(F)/Administrators(F)/$ReviewUserName(RX) only." -ForegroundColor Green
+
+# ACL verification - Executable File
+$pinnedAcl = Get-Acl -LiteralPath $pinnedAgyExe
+if (-not $pinnedAcl.AreAccessRulesProtected) {
+    throw "Inheritance is not disabled on pinned AGY binary at $pinnedAgyExe"
+}
+
+$fileWriteMask = [Security.AccessControl.FileSystemRights]::Write -bor
+                 [Security.AccessControl.FileSystemRights]::Delete -bor
+                 [Security.AccessControl.FileSystemRights]::ChangePermissions -bor
+                 [Security.AccessControl.FileSystemRights]::TakeOwnership
+$reviewRxFound = $false
+
+foreach ($rule in $pinnedAcl.Access) {
+    $sid = $rule.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value
+    if ($allowedPinnedSids -notcontains $sid) {
+        throw "Unexpected ACL principal on pinned AGY binary: $($rule.IdentityReference.Value) ($sid)"
+    }
+    if ($sid -eq $reviewSid) {
+        if ($rule.AccessControlType -eq "Allow" -and ($rule.FileSystemRights -band $fileWriteMask) -ne 0) {
+            throw "Security violation: review account has write/modify rights on pinned AGY binary!"
+        }
+        $reviewRxFound = $true
+    }
+}
+if (-not $reviewRxFound) {
+    throw "Review account ($reviewSid) has no ACE on pinned AGY binary"
+}
+Write-Host "[PASS] Pinned AGY binary ACL: inheritance disabled, SYSTEM(F)/Administrators(F)/$ReviewUserName(RX) only." -ForegroundColor Green
 
 Write-Host ""
 Write-Host "====================================================" -ForegroundColor Green
