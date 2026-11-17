@@ -100,6 +100,28 @@ if ($first -match 'must-never-appear-in-prompt') {
 
 Write-Host '[PASS] prompt binds exact head/run context without reading unrelated environment values'
 
+if ($first -notmatch 'strictly within the current checked-out repository root') {
+    throw 'Prompt does not limit inspection to the repository root.'
+}
+
+if ($first -notmatch 'Never inspect, enumerate, read, or traverse parent') {
+    throw 'Prompt does not forbid parent/sibling traversal.'
+}
+
+if ($first -notmatch 'runner infrastructure') {
+    throw 'Prompt does not forbid runner infrastructure inspection.'
+}
+
+if ($first -notmatch 'Executing compilers or toolchains declared in project_config remains permitted') {
+    throw 'Prompt does not explicitly preserve project_config compiler execution.'
+}
+
+if ($first -notmatch 'record the limitation or tool failure in the structured report instead of requesting outside access') {
+    throw 'Prompt does not direct unavailable evidence to limitations rather than outside access.'
+}
+
+Write-Host '[PASS] prompt strictly enforces repository workspace inspection boundary'
+
 $contextMatch = [regex]::Match(
     $first,
     '(?s)<review_context_json>\s*(.*?)\s*</review_context_json>'
