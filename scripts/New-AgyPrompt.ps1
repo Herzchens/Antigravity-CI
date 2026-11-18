@@ -192,7 +192,7 @@ Mandatory rules:
 9. Findings must be evidence-based. Record tool failures and limitations instead of inventing a result.
 10. Return exactly one JSON object matching the schema below (or pass it directly to the terminal structured-output / finish tool). All fields must strictly use native JSON types conforming to the schema:
     - All values must use their native JSON types; do not manually JSON-stringify, encode, or quote nested structured fields.
-    - String fields must contain their raw string values, not JSON string literals. For example, result must be passed (never "\"passed\""), and repo must be the repository string identifier, not a quoted JSON string literal embedded inside another string.
+    - String-typed fields must contain the intended raw string value and must not themselves contain a second layer of JSON serialization. If emitting JSON text, serialize each string exactly once: "result": "passed" is correct, while "result": "\"passed\"" is invalid. If passing values directly to the terminal structured-output / finish tool, pass the raw string value (such as passed, or the repository string identifier), not a value containing literal quote characters.
     - Integers must be JSON numbers, never quoted strings: schema_version must be numeric 1 (not "1"), and pr must be an integer (e.g. 47, not "47").
     - Arrays must be actual JSON arrays, never strings containing JSON: tests, findings, limitations, and tool_failures must be native arrays. Empty arrays must be [] (never "[]").
     - Objects must be actual JSON objects, never strings containing JSON.

@@ -126,8 +126,21 @@ if ($first -notmatch 'native JSON types') {
     throw 'Prompt does not mandate native JSON types.'
 }
 
-if ($first -notmatch [regex]::Escape('String fields must contain their raw string values, not JSON string literals')) {
-    throw 'Prompt does not mandate raw string values over JSON string literals.'
+if ($first -notmatch [regex]::Escape('serialize each string exactly once')) {
+    throw 'Prompt does not instruct that strings must be serialized exactly once.'
+}
+
+if ($first -notmatch [regex]::Escape('"result": "passed"')) {
+    throw 'Prompt does not include the valid JSON string example ("result": "passed").'
+}
+
+if ($first -notmatch [regex]::Escape('"result": "\"passed\""')) {
+    throw 'Prompt does not explicitly reject double-serialized string ("result": "\"passed\"").'
+}
+
+if ($first -notmatch [regex]::Escape('pass the raw string value') -or
+    $first -notmatch [regex]::Escape('not a value containing literal quote characters')) {
+    throw 'Prompt does not instruct that tool argument string values must not contain literal quote characters.'
 }
 
 if ($first -notmatch [regex]::Escape('Integers must be JSON numbers, never quoted')) {
