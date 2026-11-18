@@ -519,6 +519,99 @@ pwsh -NoProfile -File "$floodScript"
         if (Test-Path -LiteralPath $floodOutput) {
             throw 'Flooding AGY run left a publishable final report.'
         }
+
+        $errorScript = Join-Path $tempRoot 'error-agy.ps1'
+        $errorCommand = Join-Path $tempRoot 'error-agy.cmd'
+        $errorOutput = Join-Path $outside 'error-report.json'
+
+        @'
+[ordered]@{
+    conversation_id = 'fake-error'
+    status = 'ERROR'
+    error = 'structured output did not match schema'
+    response = ''
+    duration_seconds = 0
+    num_turns = 1
+    usage = @{}
+} | ConvertTo-Json -Depth 32 -Compress
+'@ | Set-Content -LiteralPath $errorScript -Encoding utf8NoBOM
+
+        @"
+@echo off
+pwsh -NoProfile -File "$errorScript"
+"@ | Set-Content -LiteralPath $errorCommand -Encoding ascii
+
+        $errorParameters = $baseParameters.Clone()
+        $errorParameters.AgyExecutable = $errorCommand
+        $errorParameters.ExpectedAgySha256 = (
+            Get-FileHash -LiteralPath $errorCommand -Algorithm SHA256 -ErrorAction Stop
+        ).Hash.ToLowerInvariant()
+        $errorParameters.OutputPath = $errorOutput
+
+        $caughtError = $null
+        try {
+            & $runner @errorParameters
+        }
+        catch {
+            $caughtError = $_.Exception.Message
+        }
+
+        $expectedErrorFragment = "Antigravity CLI returned terminal status 'ERROR': structured output did not match schema"
+        if ($null -eq $caughtError -or -not $caughtError.Contains($expectedErrorFragment)) {
+            throw "Expected error containing '$expectedErrorFragment', got '$caughtError'."
+        }
+
+        if (Test-Path -LiteralPath $errorOutput) {
+            throw 'Terminal ERROR AGY run left a publishable final report.'
+        }
+
+        Write-Host '[PASS] AGY terminal ERROR surfaces bounded error detail'
+
+        $genericErrorScript = Join-Path $tempRoot 'generic-error-agy.ps1'
+        $genericErrorCommand = Join-Path $tempRoot 'generic-error-agy.cmd'
+        $genericErrorOutput = Join-Path $outside 'generic-error-report.json'
+
+        @'
+[ordered]@{
+    conversation_id = 'fake-generic-error'
+    status = 'ERROR'
+    response = ''
+    duration_seconds = 0
+    num_turns = 1
+    usage = @{}
+} | ConvertTo-Json -Depth 32 -Compress
+'@ | Set-Content -LiteralPath $genericErrorScript -Encoding utf8NoBOM
+
+        @"
+@echo off
+pwsh -NoProfile -File "$genericErrorScript"
+"@ | Set-Content -LiteralPath $genericErrorCommand -Encoding ascii
+
+        $genericErrorParameters = $baseParameters.Clone()
+        $genericErrorParameters.AgyExecutable = $genericErrorCommand
+        $genericErrorParameters.ExpectedAgySha256 = (
+            Get-FileHash -LiteralPath $genericErrorCommand -Algorithm SHA256 -ErrorAction Stop
+        ).Hash.ToLowerInvariant()
+        $genericErrorParameters.OutputPath = $genericErrorOutput
+
+        $caughtGenericError = $null
+        try {
+            & $runner @genericErrorParameters
+        }
+        catch {
+            $caughtGenericError = $_.Exception.Message
+        }
+
+        $expectedGenericFragment = "Antigravity CLI returned terminal status 'ERROR'."
+        if ($null -eq $caughtGenericError -or -not $caughtGenericError.Contains($expectedGenericFragment)) {
+            throw "Expected error containing '$expectedGenericFragment', got '$caughtGenericError'."
+        }
+
+        if (Test-Path -LiteralPath $genericErrorOutput) {
+            throw 'Terminal generic ERROR AGY run without error field left a publishable final report.'
+        }
+
+        Write-Host '[PASS] AGY terminal ERROR without error detail falls back to generic message'
     }
 }
 finally {

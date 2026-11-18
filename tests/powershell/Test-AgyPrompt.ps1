@@ -122,6 +122,28 @@ if ($first -notmatch 'record the limitation or tool failure in the structured re
 
 Write-Host '[PASS] prompt strictly enforces repository workspace inspection boundary'
 
+if ($first -notmatch 'native JSON types') {
+    throw 'Prompt does not mandate native JSON types.'
+}
+
+if ($first -notmatch [regex]::Escape('Integers must be JSON numbers, never quoted')) {
+    throw 'Prompt does not mandate unquoted JSON numbers for integers.'
+}
+
+if ($first -notmatch [regex]::Escape('Arrays must be actual JSON arrays, never strings containing JSON')) {
+    throw 'Prompt does not forbid stringified JSON arrays.'
+}
+
+if ($first -notmatch [regex]::Escape('Empty arrays must be [] (never "[]")')) {
+    throw 'Prompt does not mandate empty native arrays [] over stringified "[]".'
+}
+
+if ($first -notmatch [regex]::Escape('check every field type against the embedded schema')) {
+    throw 'Prompt does not instruct checking field types against the embedded schema.'
+}
+
+Write-Host '[PASS] prompt strictly enforces native JSON structured output contract'
+
 $contextMatch = [regex]::Match(
     $first,
     '(?s)<review_context_json>\s*(.*?)\s*</review_context_json>'
