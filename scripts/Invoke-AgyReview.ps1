@@ -589,7 +589,7 @@ try {
         if ([string] $envelope.status -cne 'SUCCESS') {
             $errorMessage = $null
             $errorProperty = $envelope.PSObject.Properties['error']
-            if ($null -ne $errorProperty -and $null -ne $errorProperty.Value) {
+            if ($null -ne $errorProperty -and $errorProperty.Value -is [string]) {
                 $rawError = [string] $errorProperty.Value
                 if (-not [string]::IsNullOrWhiteSpace($rawError)) {
                     $cleanedError = ($rawError -replace '[\r\n\t]+', ' ').Trim()

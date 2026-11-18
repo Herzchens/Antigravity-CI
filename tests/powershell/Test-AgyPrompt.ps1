@@ -126,6 +126,10 @@ if ($first -notmatch 'native JSON types') {
     throw 'Prompt does not mandate native JSON types.'
 }
 
+if ($first -notmatch [regex]::Escape('String fields must contain their raw string values, not JSON string literals')) {
+    throw 'Prompt does not mandate raw string values over JSON string literals.'
+}
+
 if ($first -notmatch [regex]::Escape('Integers must be JSON numbers, never quoted')) {
     throw 'Prompt does not mandate unquoted JSON numbers for integers.'
 }

@@ -612,6 +612,212 @@ pwsh -NoProfile -File "$genericErrorScript"
         }
 
         Write-Host '[PASS] AGY terminal ERROR without error detail falls back to generic message'
+
+        $longErrorScript = Join-Path $tempRoot 'long-error-agy.ps1'
+        $longErrorCommand = Join-Path $tempRoot 'long-error-agy.cmd'
+        $longErrorOutput = Join-Path $outside 'long-error-report.json'
+
+        $longErrorText = ('E' * 1000)
+        @"
+[ordered]@{
+    conversation_id = 'fake-long-error'
+    status = 'ERROR'
+    error = '$longErrorText'
+    response = ''
+    duration_seconds = 0
+    num_turns = 1
+    usage = @{}
+} | ConvertTo-Json -Depth 32 -Compress
+"@ | Set-Content -LiteralPath $longErrorScript -Encoding utf8NoBOM
+
+        @"
+@echo off
+pwsh -NoProfile -File "$longErrorScript"
+"@ | Set-Content -LiteralPath $longErrorCommand -Encoding ascii
+
+        $longErrorParameters = $baseParameters.Clone()
+        $longErrorParameters.AgyExecutable = $longErrorCommand
+        $longErrorParameters.ExpectedAgySha256 = (
+            Get-FileHash -LiteralPath $longErrorCommand -Algorithm SHA256 -ErrorAction Stop
+        ).Hash.ToLowerInvariant()
+        $longErrorParameters.OutputPath = $longErrorOutput
+
+        $caughtLongError = $null
+        try {
+            & $runner @longErrorParameters
+        }
+        catch {
+            $caughtLongError = $_.Exception.Message
+        }
+
+        $expectedPrefix = "Antigravity CLI returned terminal status 'ERROR': " + ('E' * 512) + '...'
+        if ($null -eq $caughtLongError -or -not $caughtLongError.Contains($expectedPrefix)) {
+            throw "Expected truncated error ending in '...', got: $caughtLongError"
+        }
+
+        if ($caughtLongError.Contains(('E' * 513))) {
+            throw "Surfaced error exceeded 512 character boundary: $caughtLongError"
+        }
+
+        if (Test-Path -LiteralPath $longErrorOutput) {
+            throw 'Long ERROR AGY run left a publishable final report.'
+        }
+
+        Write-Host '[PASS] AGY terminal ERROR bounds long error strings'
+
+        $controlCharScript = Join-Path $tempRoot 'ctrl-char-agy.ps1'
+        $controlCharCommand = Join-Path $tempRoot 'ctrl-char-agy.cmd'
+        $controlCharOutput = Join-Path $outside 'ctrl-char-report.json'
+
+        @'
+[ordered]@{
+    conversation_id = 'fake-ctrl-char-error'
+    status = 'ERROR'
+    error = "line1`r`nline2`tline3"
+    response = ''
+    duration_seconds = 0
+    num_turns = 1
+    usage = @{}
+} | ConvertTo-Json -Depth 32 -Compress
+'@ | Set-Content -LiteralPath $controlCharScript -Encoding utf8NoBOM
+
+        @"
+@echo off
+pwsh -NoProfile -File "$controlCharScript"
+"@ | Set-Content -LiteralPath $controlCharCommand -Encoding ascii
+
+        $controlCharParameters = $baseParameters.Clone()
+        $controlCharParameters.AgyExecutable = $controlCharCommand
+        $controlCharParameters.ExpectedAgySha256 = (
+            Get-FileHash -LiteralPath $controlCharCommand -Algorithm SHA256 -ErrorAction Stop
+        ).Hash.ToLowerInvariant()
+        $controlCharParameters.OutputPath = $controlCharOutput
+
+        $caughtCtrlError = $null
+        try {
+            & $runner @controlCharParameters
+        }
+        catch {
+            $caughtCtrlError = $_.Exception.Message
+        }
+
+        $expectedNormalizedFragment = "Antigravity CLI returned terminal status 'ERROR': line1 line2 line3"
+        if ($null -eq $caughtCtrlError -or -not $caughtCtrlError.Contains($expectedNormalizedFragment)) {
+            throw "Expected normalized single-line error, got: $caughtCtrlError"
+        }
+
+        if ($caughtCtrlError -match '[\r\n\t]') {
+            throw "Surfaced error contained raw control characters: $caughtCtrlError"
+        }
+
+        if (Test-Path -LiteralPath $controlCharOutput) {
+            throw 'Control-character ERROR AGY run left a publishable final report.'
+        }
+
+        Write-Host '[PASS] AGY terminal ERROR normalizes control characters'
+
+        $responseLeakScript = Join-Path $tempRoot 'response-leak-agy.ps1'
+        $responseLeakCommand = Join-Path $tempRoot 'response-leak-agy.cmd'
+        $responseLeakOutput = Join-Path $outside 'response-leak-report.json'
+
+        @'
+[ordered]@{
+    conversation_id = 'fake-response-leak-error'
+    status = 'ERROR'
+    error = 'safe diagnostic'
+    response = 'RESPONSE_SECRET_SENTINEL'
+    duration_seconds = 0
+    num_turns = 1
+    usage = @{}
+} | ConvertTo-Json -Depth 32 -Compress
+'@ | Set-Content -LiteralPath $responseLeakScript -Encoding utf8NoBOM
+
+        @"
+@echo off
+pwsh -NoProfile -File "$responseLeakScript"
+"@ | Set-Content -LiteralPath $responseLeakCommand -Encoding ascii
+
+        $responseLeakParameters = $baseParameters.Clone()
+        $responseLeakParameters.AgyExecutable = $responseLeakCommand
+        $responseLeakParameters.ExpectedAgySha256 = (
+            Get-FileHash -LiteralPath $responseLeakCommand -Algorithm SHA256 -ErrorAction Stop
+        ).Hash.ToLowerInvariant()
+        $responseLeakParameters.OutputPath = $responseLeakOutput
+
+        $caughtResponseLeakError = $null
+        try {
+            & $runner @responseLeakParameters
+        }
+        catch {
+            $caughtResponseLeakError = $_.Exception.Message
+        }
+
+        if ($null -eq $caughtResponseLeakError -or -not $caughtResponseLeakError.Contains("safe diagnostic")) {
+            throw "Expected error to contain safe diagnostic, got: $caughtResponseLeakError"
+        }
+
+        if ($caughtResponseLeakError.Contains('RESPONSE_SECRET_SENTINEL')) {
+            throw "Surfaced error leaked response body: $caughtResponseLeakError"
+        }
+
+        if (Test-Path -LiteralPath $responseLeakOutput) {
+            throw 'Response-leak ERROR AGY run left a publishable final report.'
+        }
+
+        Write-Host '[PASS] AGY terminal ERROR never leaks response body'
+
+        $structuredErrorScript = Join-Path $tempRoot 'structured-error-agy.ps1'
+        $structuredErrorCommand = Join-Path $tempRoot 'structured-error-agy.cmd'
+        $structuredErrorOutput = Join-Path $outside 'structured-error-report.json'
+
+        @'
+[ordered]@{
+    conversation_id = 'fake-structured-error'
+    status = 'ERROR'
+    error = [ordered]@{
+        message = 'STRUCTURED_ERROR_SECRET_SENTINEL'
+    }
+    response = ''
+    duration_seconds = 0
+    num_turns = 1
+    usage = @{}
+} | ConvertTo-Json -Depth 32 -Compress
+'@ | Set-Content -LiteralPath $structuredErrorScript -Encoding utf8NoBOM
+
+        @"
+@echo off
+pwsh -NoProfile -File "$structuredErrorScript"
+"@ | Set-Content -LiteralPath $structuredErrorCommand -Encoding ascii
+
+        $structuredErrorParameters = $baseParameters.Clone()
+        $structuredErrorParameters.AgyExecutable = $structuredErrorCommand
+        $structuredErrorParameters.ExpectedAgySha256 = (
+            Get-FileHash -LiteralPath $structuredErrorCommand -Algorithm SHA256 -ErrorAction Stop
+        ).Hash.ToLowerInvariant()
+        $structuredErrorParameters.OutputPath = $structuredErrorOutput
+
+        $caughtStructuredError = $null
+        try {
+            & $runner @structuredErrorParameters
+        }
+        catch {
+            $caughtStructuredError = $_.Exception.Message
+        }
+
+        $expectedGenericFragment = "Antigravity CLI returned terminal status 'ERROR'."
+        if ($null -eq $caughtStructuredError -or -not $caughtStructuredError.Contains($expectedGenericFragment)) {
+            throw "Expected generic error message for structured error, got: $caughtStructuredError"
+        }
+
+        if ($caughtStructuredError.Contains('STRUCTURED_ERROR_SECRET_SENTINEL')) {
+            throw "Surfaced error leaked structured error content: $caughtStructuredError"
+        }
+
+        if (Test-Path -LiteralPath $structuredErrorOutput) {
+            throw 'Structured ERROR AGY run left a publishable final report.'
+        }
+
+        Write-Host '[PASS] AGY terminal ERROR with structured error falls back to generic message'
     }
 }
 finally {
