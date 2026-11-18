@@ -378,6 +378,8 @@ foreach ($name in @(
 }
 
 if ($Role -eq 'Publisher') {
+    $global:LASTEXITCODE = 0
+
     [pscustomobject][ordered]@{
         Role = 'Publisher'
         WindowsBuild = [Environment]::OSVersion.Version.Build

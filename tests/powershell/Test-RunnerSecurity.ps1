@@ -307,6 +307,41 @@ exit /b 2
 
     Write-Host '[PASS] isolated publisher role requires no AGY executable or signing key'
 
+    if ($LASTEXITCODE -ne 0) {
+        throw "Publisher preflight leaked non-zero exit code: $LASTEXITCODE"
+    }
+
+    Write-Host '[PASS] publisher preflight normalizes accepted native exit state to zero'
+
+    $childRunnerScript = Join-Path $tempRoot 'run-publisher-epilogue.ps1'
+    @"
+#requires -Version 7.4
+Set-StrictMode -Version Latest
+`$ErrorActionPreference = 'Stop'
+
+`$publisherParameters = @{
+    Role = 'Publisher'
+    AgyExecutable = 'publisher-does-not-require-agy'
+    HomeDirectory = '$fakeHome'
+    MinimumWindowsBuild = 1
+    ForbiddenIdentities = @('OTHER-HOST\OtherUser')
+    RequireGitIsolation = `$true
+}
+
+& '$preflight' @publisherParameters | Out-Null
+
+if ((Test-Path -LiteralPath variable:\LASTEXITCODE)) {
+    exit `$LASTEXITCODE
+}
+"@ | Set-Content -LiteralPath $childRunnerScript -Encoding utf8NoBOM
+
+    $pwshProcess = Start-Process -FilePath 'pwsh.exe' -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $childRunnerScript) -Wait -PassThru
+    if ($pwshProcess.ExitCode -ne 0) {
+        throw "GitHub Actions-style shell wrapper exited with code $($pwshProcess.ExitCode) (expected 0)."
+    }
+
+    Write-Host '[PASS] publisher preflight completes with exit code 0 under GitHub-style shell wrapper'
+
     $publisherSameIdentity = $publisherParameters.Clone()
     $publisherSameIdentity.ForbiddenIdentities = @($publisher.Identity)
 
